@@ -583,3 +583,29 @@ async def test_missing_active_tray_is_not_reported(hass: HomeAssistant, bambu_en
     data = await async_get_config_entry_diagnostics(hass, entry)
     assert data["missing_printer_sensors"] == []
     assert len(data["external_spool_entities"]) == 2
+
+
+async def test_spool_devices_are_looked_up_again_at_print_start(hass: HomeAssistant, bambu_entry):
+    """ha-bambulab adds and removes AMS and spool devices; checking once per print is enough."""
+    registry = er.async_get(hass)
+    registry.async_remove("binary_sensor.a1_externalspool_active")
+    entry = await setup_timeline(hass, bambu_entry)
+    coordinator = entry.runtime_data
+    assert coordinator.spool_entity_ids == ["sensor.a1_externalspool_external_spool"]
+
+    registry.async_get_or_create(
+        "binary_sensor",
+        "bambu_lab",
+        f"A1_{SERIAL}_ExternalSpool_active_ams",
+        suggested_object_id="a1_externalspool_active",
+        config_entry=bambu_entry,
+    )
+    hass.states.async_set("sensor.a1_print_status", "idle")  # Not a print start: nothing re-checked.
+    await settle(hass)
+    assert len(coordinator.spool_entity_ids) == 1
+
+    cache_gcode(hass)
+    printer(hass, "running", layer=1, remaining=215, progress=6, external=True)
+    await settle(hass)
+    assert len(coordinator.spool_entity_ids) == 2
+    assert coordinator.snapshot().on_external_spool is True

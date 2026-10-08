@@ -173,7 +173,11 @@ class TimelineCoordinator:
         await self._store.async_save(self._storage_data())
 
     def _ensure_tracking(self) -> None:
-        """Look up the printer's entities and listen to them. Retried on every tick until all are found."""
+        """Look up the printer's entities and listen to them.
+
+        Done at setup and when a print starts (the spool setup can't change in a way that matters
+        during a print), and retried on every tick while required sensors are still missing.
+        """
         registry = er.async_get(self.hass)
         found = {}
         printer_entities: list[er.RegistryEntry] | None = None
@@ -271,8 +275,9 @@ class TimelineCoordinator:
 
     @callback
     def _on_tick(self, _now: datetime) -> None:
-        # Cheap, and picks up devices ha-bambulab adds or removes on the fly (AMS units, spools).
-        self._ensure_tracking()
+        if self.missing_printer_sensors:
+            # E.g. ha-bambulab hasn't finished setting up after a restart.
+            self._ensure_tracking()
         self._evaluate(printer_changed=False)
 
     # ----- reading the printer -----------------------------------------------------------
@@ -384,6 +389,8 @@ class TimelineCoordinator:
         if self._stored.get("key") and self._stored.get("key") == key and self._stored.get("started"):
             started = dt_util.parse_datetime(self._stored["started"]) or now
         LOGGER.debug("Print started: %s", key or "(name not known yet)")
+        # Pick up AMS or spool devices ha-bambulab added or removed since the last print.
+        self._ensure_tracking()
         self.session = PrintSession(key=key, started=started)
         self._minute_clock = MinuteInterpolator()
         self.parse_status = PARSE_WAITING
