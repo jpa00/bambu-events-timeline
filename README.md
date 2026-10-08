@@ -108,7 +108,7 @@ The times it finds should match what OrcaSlicer shows when you hover an event's 
 - **Advance warning.** How many minutes before an event the heads-up goes out. 0 turns heads-ups off.
 - **Also alert when the event happens.** On by default.
 - **Alerts for custom G-code on by default.** Pauses always start with alerts on.
-- **Keep finished events on the list.** Off by default.
+- **Keep finished events on the list.** Off by default. Finished events are shown with a check, and their alerts can't be changed any more.
 - **Show seconds in the last minute.** Off by default. In an event's final minute the countdown reads "in ~45 s". The printer only reports whole minutes, so the seconds are an informed estimate, worked out from when the printer's minute last ticked down.
 - **Safety margin (minutes).** 0.5 by default.
 - **Extra safety margin for far-off events (percent).** Off by default. A percentage of the time left until each event, used instead of the minute margin when it's larger. Useful if your countdowns tend to run late on long prints.

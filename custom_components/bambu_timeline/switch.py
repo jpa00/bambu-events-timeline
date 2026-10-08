@@ -7,10 +7,11 @@ from typing import Any
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_EVENT_SLOTS, CONF_SHOW_FINISHED, CONF_SHOW_SECONDS
+from .const import CONF_EVENT_SLOTS, CONF_SHOW_FINISHED, CONF_SHOW_SECONDS, DOMAIN
 from .coordinator import TimelineCoordinator
 from .entity import TimelineEntity
 from .estimator import STATUS_DONE
@@ -77,7 +78,22 @@ class EventAlertSwitch(TimelineEntity, SwitchEntity):
 
     @property
     def icon(self) -> str:
+        if self._finished():
+            return "mdi:check-circle-outline"
         return "mdi:bell-ring" if self.is_on else "mdi:bell-off-outline"
+
+    def _finished(self) -> bool:
+        session = self.coordinator.session
+        return (
+            session is not None
+            and self.index < len(session.states)
+            and session.states[self.index].status == STATUS_DONE
+        )
+
+    def _refuse_if_finished(self) -> None:
+        # An alert for something that has already happened can't go out any more.
+        if self._finished():
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="event_finished")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -95,9 +111,11 @@ class EventAlertSwitch(TimelineEntity, SwitchEntity):
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        self._refuse_if_finished()
         self.coordinator.set_alert(self.index, True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
+        self._refuse_if_finished()
         self.coordinator.set_alert(self.index, False)
 
 

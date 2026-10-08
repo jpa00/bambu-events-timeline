@@ -609,3 +609,21 @@ async def test_spool_devices_are_looked_up_again_at_print_start(hass: HomeAssist
     await settle(hass)
     assert len(coordinator.spool_entity_ids) == 2
     assert coordinator.snapshot().on_external_spool is True
+
+
+async def test_finished_event_alert_cannot_be_changed(hass: HomeAssistant, bambu_entry):
+    from homeassistant.exceptions import ServiceValidationError
+
+    await setup_timeline(hass, bambu_entry, show_finished=True)
+    cache_gcode(hass)
+    printer(hass, "running", layer=6, remaining=145, progress=37)
+    await settle(hass)
+    first = hass.states.get(EVENT_1)
+    assert first.attributes["status"] == "done"
+    assert first.attributes["icon"] == "mdi:check-circle-outline"
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call("switch", "turn_off", {"entity_id": EVENT_1}, blocking=True)
+    assert hass.states.get(EVENT_1).state == STATE_ON
+    # Upcoming events can still be changed.
+    await hass.services.async_call("switch", "turn_off", {"entity_id": "switch.a1_timeline_event_2"}, blocking=True)
+    assert hass.states.get("switch.a1_timeline_event_2").state == STATE_OFF

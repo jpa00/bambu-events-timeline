@@ -52,7 +52,7 @@ cards:
             tap_action:
               action: more-info
 
-        # One row per event. Tap a row to turn its alert on or off.
+        # One row per event. Tap a row to turn its alert on or off (not once the event is done).
         # The next event gets a small clock badge on its icon.
         - type: custom:auto-entities
           show_empty: false
@@ -74,8 +74,12 @@ cards:
                   entity: this.entity_id
                   primary: "{{ state_attr(entity, 'label') }}"
                   secondary: "{{ state_attr(entity, 'countdown') }}"
-                  icon: "{{ 'mdi:bell-ring' if is_state(entity, 'on') else 'mdi:bell-off-outline' }}"
-                  color: "{{ 'amber' if is_state(entity, 'on') else 'disabled' }}"
+                  icon: >-
+                    {{ 'mdi:check-circle-outline' if is_state_attr(entity, 'status', 'done')
+                       else 'mdi:bell-ring' if is_state(entity, 'on') else 'mdi:bell-off-outline' }}
+                  color: >-
+                    {{ 'disabled' if is_state_attr(entity, 'status', 'done')
+                       else 'amber' if is_state(entity, 'on') else 'disabled' }}
                   badge_icon: >-
                     {% set next = state_attr('sensor.a1_timeline_next_event', 'slot') %}
                     {{ 'mdi:clock-fast' if next and entity.endswith('_event_' ~ next) else '' }}

@@ -81,5 +81,10 @@
         "name": "Send test notification"
       }
     }
+  },
+  "exceptions": {
+    "event_finished": {
+      "message": "This event has already happened, so its alert can't be changed."
+    }
   }
 }
