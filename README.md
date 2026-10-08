@@ -78,7 +78,7 @@ The slicer writes its own time estimate into the G-code every minute or so. From
 
 - **Pauses** (planned or not) stop the countdown. It continues when the print resumes.
 - **Speed changes** (silent, sport, ludicrous) are followed after a few minutes.
-- **It runs early on purpose.** Countdowns are shortened by a safety margin: 1 minute or 3 %, whichever is larger. You can change that in the options.
+- **It runs early on purpose.** Countdowns are shortened by a safety margin of half a minute, and they round down to whole minutes, so they reach zero up to a minute and a half before the event. On my first real print, the estimate itself was within seconds of the actual pause. The margin is adjustable in the options.
 
 The times it finds should match what OrcaSlicer shows when you hover an event's icon on the preview's layer slider, to within a few seconds. Without hovering, Orca shows the layer's *end* time instead, which can be quite a bit later.
 
@@ -91,7 +91,8 @@ The times it finds should match what OrcaSlicer shows when you hover an event's 
 - **Also alert when the event happens.** On by default.
 - **Alerts for custom G-code on by default.** Pauses always start with alerts on.
 - **Keep finished events on the list.** Off by default.
-- **Safety margin.** Minutes and percent; the larger one is used.
+- **Safety margin (minutes).** 0.5 by default.
+- **Extra safety margin for far-off events (percent).** Off by default. A percentage of the time left until each event, used instead of the minute margin when it's larger. Useful if your countdowns tend to run late on long prints.
 - **Maximum number of events.** 10 by default.
 
 ## When something doesn't work

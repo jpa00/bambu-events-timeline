@@ -29,7 +29,7 @@
           "custom_gcode_alerts": "Alerts for custom G-code on by default",
           "show_finished": "Keep finished events on the list",
           "early_margin_minutes": "Safety margin (minutes)",
-          "early_margin_percent": "Safety margin (percent)",
+          "early_margin_percent": "Extra safety margin for far-off events (percent)",
           "event_slots": "Maximum number of events"
         },
         "data_description": {
@@ -38,8 +38,8 @@
           "alert_on_event": "Send a second notification when the printer actually pauses or reaches the custom G-code. It replaces the heads-up on the phone.",
           "custom_gcode_alerts": "Pauses always start with alerts on. This decides whether custom G-code events do too. You can still change each event on the dashboard.",
           "show_finished": "Off: an event disappears once it's done (its switch becomes unavailable). On: it stays, marked as done, until the print ends.",
-          "early_margin_minutes": "Countdowns are shortened by this many minutes or the percentage below, whichever is larger, so they run early rather than late.",
-          "early_margin_percent": "See above.",
+          "early_margin_minutes": "Countdowns are shortened by this many minutes, so they run early rather than late. Countdowns also round down to whole minutes, which adds up to another minute.",
+          "early_margin_percent": "A percentage of the time left until each event (not of the whole print). If it is larger than the minute margin, it is used instead: 3 % of an event 2 hours away is 3.6 minutes. Close to the event, only the minute margin applies. 0 turns it off.",
           "event_slots": "How many events a print can show. Changing this adds or removes entities."
         }
       }

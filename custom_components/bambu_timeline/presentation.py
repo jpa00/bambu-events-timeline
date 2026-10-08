@@ -54,6 +54,8 @@ def countdown_text(event: TimelineEvent, state: EventState) -> str:
     if state.estimate_after_start:
         return f"{duration_text(minutes)} after printing starts"
     when = f" · {clock(state.eta)}" if state.eta else ""
+    if minutes == 0:
+        return f"in less than a minute{when}"
     return f"in {duration_text(minutes)}{when}"
 
 

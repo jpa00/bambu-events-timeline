@@ -63,7 +63,7 @@ class EventState:
 
 
 class Estimator:
-    def __init__(self, parsed: ParsedPrint, margin_min: float = 1.0, margin_pct: float = 0.03, k: float = 1.0):
+    def __init__(self, parsed: ParsedPrint, margin_min: float = 0.5, margin_pct: float = 0.0, k: float = 1.0):
         self.parsed = parsed
         self.margin_min = margin_min
         self.margin_pct = margin_pct

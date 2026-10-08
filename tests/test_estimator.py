@@ -153,3 +153,11 @@ def test_repeated_readings_count_once():
     for _ in range(20):
         estimator.observe(at(200, rate=2.0))
     assert estimator.k == pytest.approx(1.3)
+
+
+def test_margin_defaults_and_percentage():
+    estimator = Estimator(PARSED)
+    assert estimator.with_margin(60) == pytest.approx(59.5)
+    estimator = Estimator(PARSED, margin_min=1, margin_pct=0.03)
+    assert estimator.with_margin(120) == pytest.approx(120 - 3.6)  # Percentage of the time left wins far out...
+    assert estimator.with_margin(10) == pytest.approx(9)  # ...the minute margin close to the event.
