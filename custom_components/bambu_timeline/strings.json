@@ -1,0 +1,83 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Pick your printer",
+        "description": "Choose the Bambu Lab printer to follow. It must already be set up with the Bambu Lab integration, and that integration needs the printer's IP address so it can download print files.",
+        "data": {
+          "bambu_entry_id": "Printer",
+          "default_recipients": "Notify by default"
+        },
+        "data_description": {
+          "default_recipients": "Phones (with the Home Assistant app) that get alerts for every print unless switched off for that print. You can change this later."
+        }
+      }
+    },
+    "abort": {
+      "no_printers": "No printers found. Set up the Bambu Lab integration (ha-bambulab) first.",
+      "already_configured": "This printer already has a timeline."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Timeline settings",
+        "data": {
+          "default_recipients": "Notify by default",
+          "lead_time": "Advance warning",
+          "alert_on_event": "Also alert when the event happens",
+          "custom_gcode_alerts": "Alerts for custom G-code on by default",
+          "show_finished": "Keep finished events on the list",
+          "early_margin_minutes": "Safety margin (minutes)",
+          "early_margin_percent": "Safety margin (percent)",
+          "event_slots": "Maximum number of events"
+        },
+        "data_description": {
+          "default_recipients": "Phones that get alerts for every print. Anyone can still switch their phone on or off for a single print; it goes back to this setting when the print ends.",
+          "lead_time": "How many minutes before an event the heads-up is sent. 0 turns heads-ups off.",
+          "alert_on_event": "Send a second notification when the printer actually pauses or reaches the custom G-code. It replaces the heads-up on the phone.",
+          "custom_gcode_alerts": "Pauses always start with alerts on. This decides whether custom G-code events do too. You can still change each event on the dashboard.",
+          "show_finished": "Off: an event disappears once it's done (its switch becomes unavailable). On: it stays, marked as done, until the print ends.",
+          "early_margin_minutes": "Countdowns are shortened by this many minutes or the percentage below, whichever is larger, so they run early rather than late.",
+          "early_margin_percent": "See above.",
+          "event_slots": "How many events a print can show. Changing this adds or removes entities."
+        }
+      }
+    }
+  },
+  "entity": {
+    "switch": {
+      "event": {
+        "name": "Event {slot}"
+      },
+      "notify": {
+        "name": "Notify {device}"
+      }
+    },
+    "sensor": {
+      "next_event": {
+        "name": "Next event"
+      },
+      "gcode_status": {
+        "name": "G-code status",
+        "state": {
+          "idle": "No print",
+          "waiting_for_file": "Waiting for file",
+          "parsing": "Reading file",
+          "ok": "OK",
+          "no_events": "No events in this print",
+          "file_not_found": "File not found",
+          "error": "Error"
+        }
+      },
+      "alert_recipients": {
+        "name": "Alert recipients"
+      }
+    },
+    "button": {
+      "test_notification": {
+        "name": "Send test notification"
+      }
+    }
+  }
+}

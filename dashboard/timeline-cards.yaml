@@ -1,0 +1,147 @@
+# Event timeline cards for a Home Assistant dashboard.
+#
+# The lists find their entities by integration, but three entity IDs are written out:
+#   sensor.a1_timeline_g_code_status, sensor.a1_timeline_next_event and
+#   sensor.a1_timeline_alert_recipients.
+# Home Assistant may have named yours differently: with another printer model, or with the
+# area in front (e.g. sensor.workshop_a1_timeline_next_event) if the device was given an area.
+# Check yours under Settings -> Entities, and either rename them or change them below.
+#
+# Needs three frontend cards from HACS: Mushroom, auto-entities and collapsable-cards.
+#
+# Paste this into a dashboard's YAML as one card, e.g. right below the print status card.
+# The event list only shows while a print is going on. The "Sending alerts to" row is
+# always visible, so you can opt in before a print starts.
+
+type: vertical-stack
+cards:
+  - type: conditional
+    conditions:
+      - condition: state
+        entity: sensor.a1_timeline_g_code_status
+        state_not: idle
+    card:
+      type: vertical-stack
+      cards:
+        # A status line, only when there are no events to list.
+        - type: conditional
+          conditions:
+            - condition: or
+              conditions:
+                - condition: state
+                  entity: sensor.a1_timeline_g_code_status
+                  state_not: ok
+                - condition: state
+                  entity: sensor.a1_timeline_next_event
+                  state: unknown
+          card:
+            type: custom:mushroom-template-card
+            entity: sensor.a1_timeline_g_code_status
+            icon: mdi:timer-sand
+            primary: >-
+              {{ {
+                'waiting_for_file': 'Looking for the G-code…',
+                'parsing': 'Reading the G-code…',
+                'file_not_found': 'G-code not found',
+                'error': 'Could not read the G-code',
+                'no_events': 'No planned pauses in this print',
+              }.get(states(entity), 'No more planned pauses in this print') }}
+            secondary: >-
+              {{ 'Check that ha-bambulab has the printer IP address and access code.'
+                 if is_state(entity, 'file_not_found') else '' }}
+            tap_action:
+              action: more-info
+
+        # One row per event. Tap a row to turn its alert on or off.
+        # The next event gets a small clock badge on its icon.
+        - type: custom:auto-entities
+          show_empty: false
+          card:
+            type: grid
+            columns: 1
+            square: false
+          card_param: cards
+          filter:
+            include:
+              # Found by integration and role rather than entity ID, so entity naming doesn't matter.
+              # With more than one printer, add "device: A1 Timeline" here.
+              - integration: bambu_timeline
+                domain: switch
+                attributes:
+                  role: event
+                options:
+                  type: custom:mushroom-template-card
+                  entity: this.entity_id
+                  primary: "{{ state_attr(entity, 'label') }}"
+                  secondary: "{{ state_attr(entity, 'countdown') }}"
+                  icon: "{{ 'mdi:bell-ring' if is_state(entity, 'on') else 'mdi:bell-off-outline' }}"
+                  color: "{{ 'amber' if is_state(entity, 'on') else 'disabled' }}"
+                  badge_icon: >-
+                    {% set next = state_attr('sensor.a1_timeline_next_event', 'slot') %}
+                    {{ 'mdi:clock-fast' if next and entity.endswith('_event_' ~ next) else '' }}
+                  badge_color: >-
+                    {{ 'red' if state_attr(entity, 'status') in ['active', 'due'] else 'blue' }}
+                  tap_action:
+                    action: toggle
+            exclude:
+              # Unused slots and finished events.
+              - state: unavailable
+          sort:
+            method: attribute
+            attribute: slicer_time
+            numeric: true
+
+  # Who gets alerts for this print, collapsed by default. The title says who is getting them;
+  # open it to switch devices on or off for this print or to send a test.
+  # Device settings go back to the defaults (set in the integration's options) when the print ends.
+  - type: custom:collapsable-cards
+    defaultOpen: false
+    title_card:
+      type: custom:mushroom-template-card
+      entity: sensor.a1_timeline_alert_recipients
+      icon: mdi:message-badge-outline
+      primary: "Sending alerts to {{ states(entity) }}"
+      secondary: >-
+        {% set count = state_attr(entity, 'device_count') | int(0) %}
+        {{ 'Open to choose devices' if count == 0 else count ~ (' device' if count == 1 else ' devices') }}
+      color: "{{ 'green' if state_attr(entity, 'device_count') | int(0) > 0 else 'disabled' }}"
+      tap_action:
+        action: none
+    cards:
+      - type: custom:auto-entities
+        show_empty: false
+        card:
+          type: grid
+          columns: 2
+          square: false
+        card_param: cards
+        filter:
+          include:
+            # Found by integration and role rather than entity ID, so device names don't matter.
+            # With more than one printer, add "device: A1 Timeline" to both filters.
+            - integration: bambu_timeline
+              domain: switch
+              attributes:
+                role: recipient
+              options:
+                type: custom:mushroom-template-card
+                entity: this.entity_id
+                primary: "{{ state_attr(entity, 'device') }}"
+                secondary: "{{ state_attr(entity, 'person') }} · {{ 'on' if is_state(entity, 'on') else 'off' }}"
+                icon: "{{ 'mdi:cellphone-message' if is_state(entity, 'on') else 'mdi:cellphone-off' }}"
+                color: "{{ 'green' if is_state(entity, 'on') else 'disabled' }}"
+                tap_action:
+                  action: toggle
+            - integration: bambu_timeline
+              domain: button
+              options:
+                type: custom:mushroom-template-card
+                entity: this.entity_id
+                primary: Send a test
+                secondary: To the devices that are on
+                icon: mdi:send-outline
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: this.entity_id
