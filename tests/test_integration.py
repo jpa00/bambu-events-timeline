@@ -521,3 +521,27 @@ async def test_external_spool_changes_shorten_the_countdown(hass: HomeAssistant,
     printer_at(hass, 190, external=True)
     await settle(hass)
     assert hass.states.get(EVENT_1).attributes["minutes_until"] == on_ams - 1
+
+
+async def test_printer_sensor_found_by_kind_when_its_id_differs(hass: HomeAssistant, bambu_entry):
+    """Some ha-bambulab installs have a sensor under a different unique ID; find it on the printer's device."""
+    from homeassistant.helpers import device_registry as dr
+
+    registry = er.async_get(hass)
+    registry.async_remove("sensor.a1_active_tray")
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=bambu_entry.entry_id, identifiers={("bambu_lab", SERIAL)}, name="A1"
+    )
+    registry.async_get_or_create(
+        "sensor",
+        "bambu_lab",
+        f"A1_{SERIAL}_active_tray_legacy",
+        suggested_object_id="a1_active_material",
+        config_entry=bambu_entry,
+        device_id=device.id,
+        translation_key="active_tray",
+    )
+    entry = await setup_timeline(hass, bambu_entry)
+    assert entry.runtime_data.entity_ids["active_tray"] == "sensor.a1_active_material"
+    data = await async_get_config_entry_diagnostics(hass, entry)
+    assert data["missing_printer_sensors"] == []

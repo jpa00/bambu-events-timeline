@@ -13,6 +13,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
@@ -169,8 +170,23 @@ class TimelineCoordinator:
         """Look up the printer's entities and listen to them. Retried on every tick until all are found."""
         registry = er.async_get(self.hass)
         found = {}
+        printer_entities: list[er.RegistryEntry] | None = None
         for key in BAMBU_KEYS:
             entity_id = registry.async_get_entity_id("sensor", BAMBU_DOMAIN, f"{self.serial}_{key}")
+            if entity_id is None:
+                # Not under the usual ID (older ha-bambulab installs can differ): look for the sensor
+                # of that kind on the printer's own device instead.
+                if printer_entities is None:
+                    printer_entities = self._printer_device_entities(registry)
+                entity_id = next(
+                    (
+                        entry.entity_id
+                        for entry in printer_entities
+                        if entry.domain == "sensor"
+                        and (entry.translation_key == key or entry.unique_id.endswith(f"_{key}"))
+                    ),
+                    None,
+                )
             if entity_id:
                 found[key] = entity_id
         if found == self.entity_ids and self._tracking_unsub:
@@ -186,6 +202,17 @@ class TimelineCoordinator:
             self._tracking_unsub = async_track_state_change_event(
                 self.hass, list(found.values()), self._on_printer_change
             )
+
+    def _printer_device_entities(self, registry: er.EntityRegistry) -> list[er.RegistryEntry]:
+        devices = dr.async_get(self.hass)
+        for device in devices.devices.values():
+            if (BAMBU_DOMAIN, self.serial) in device.identifiers:
+                return er.async_entries_for_device(registry, device.id)
+        return []
+
+    @property
+    def missing_printer_sensors(self) -> list[str]:
+        return sorted(set(BAMBU_KEYS) - set(self.entity_ids))
 
     # ----- listeners ---------------------------------------------------------------------
 

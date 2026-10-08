@@ -23,6 +23,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
     return {
         "options": dict(coordinator.options),
         "printer_entities": coordinator.entity_ids,
+        "missing_printer_sensors": coordinator.missing_printer_sensors,
         "cache_folders": [str(root) for root in coordinator.cache_roots()],
         "gcode_status": coordinator.parse_status,
         "error": coordinator.parse_error,

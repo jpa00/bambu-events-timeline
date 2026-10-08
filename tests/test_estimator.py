@@ -185,14 +185,14 @@ def test_minute_interpolation():
     assert clock.refine(5, NOW + timedelta(minutes=11, seconds=30)) == 5
 
 
-def replay_predictions():
+def replay_predictions(fixture: str = "replay_a1_standard_speed.json"):
     """Replay a real print's readings; return (time, predicted pause time) at each reading."""
     import json
     from datetime import timedelta
 
     from custom_components.bambu_timeline.gcode_parser import KIND_PAUSE, ParsedPrint, TimelineEvent
 
-    data = json.loads((FIXTURES / "replay_a1_standard_speed.json").read_text(encoding="utf-8"))
+    data = json.loads((FIXTURES / fixture).read_text(encoding="utf-8"))
     event = TimelineEvent(
         kind=KIND_PAUSE, layer=data["pause_layer"], remaining_min=data["pause_remaining_min"], elapsed_min=0, line=0
     )
@@ -227,18 +227,18 @@ def test_pace_meter():
     meter = PaceMeter()
     now, remaining = NOW, 100.0
     for _ in range(15):  # Each printer-minute takes 62 real seconds.
-        meter.observe(remaining, PRINTER_RUNNING, now)
+        meter.observe(remaining, PRINTER_RUNNING, now, 5)
         now += timedelta(seconds=62)
         remaining -= 1
     assert meter.pace == pytest.approx(62 / 60, abs=0.001)
 
     # A pause doesn't count, and a big jump (a skipped filament change) counts as one minute.
-    meter.observe(remaining, PRINTER_PAUSED, now)
+    meter.observe(remaining, PRINTER_PAUSED, now, 5)
     now += timedelta(minutes=30)
-    meter.observe(remaining, PRINTER_RUNNING, now)
+    meter.observe(remaining, PRINTER_RUNNING, now, 5)
     now += timedelta(seconds=62)
     remaining -= 3
-    meter.observe(remaining, PRINTER_RUNNING, now)
+    meter.observe(remaining, PRINTER_RUNNING, now, 5)
     assert meter.pace == pytest.approx(62 / 60, abs=0.001)
 
 
@@ -248,7 +248,7 @@ def test_pace_needs_ten_minutes_of_data():
     meter = PaceMeter()
     now, remaining = NOW, 100.0
     for _ in range(5):
-        meter.observe(remaining, PRINTER_RUNNING, now)
+        meter.observe(remaining, PRINTER_RUNNING, now, 5)
         now += timedelta(seconds=90)
         remaining -= 1
     assert meter.pace == 1.0
@@ -284,3 +284,14 @@ def test_change_with_a_pause_is_not_skipped():
     estimator = Estimator(parsed)
     snap = PrinterSnapshot(status=PRINTER_RUNNING, remaining_min=55, layer=1, on_external_spool=True)
     assert estimator.skipped_change_time(later_pause, 55, snap) == 0  # A real (manual) change takes real time.
+
+
+def test_replay_from_print_start():
+    """Replays a real A1 print from its start: the start sequence stalls the printer's clock and the
+    first layer runs slower than estimated. Neither may skew the pace: never more than a minute late."""
+    (actual, _), predictions, _ = replay_predictions("replay_a1_from_start.json")
+    assert predictions
+    for offset, predicted in predictions:
+        assert predicted - actual <= 60, (offset, predicted - actual)
+        if actual - offset <= 20 * 60:
+            assert predicted - actual >= -90, (offset, predicted - actual)

@@ -55,7 +55,11 @@ K_DEADBAND = 0.03
 # Pace is measured over this much printing time, and only used once there is enough of it.
 PACE_WINDOW_MIN = 20.0
 PACE_MIN_DATA_MIN = 10.0
-PACE_LIMITS = (0.8, 1.25)
+PACE_LIMITS = (0.85, 1.15)
+# The start sequence and the first layer run at their own, unrepresentative speed.
+PACE_FIRST_LAYER = 2
+# A printer-minute taking longer than this isn't printing pace: skip it.
+PACE_MAX_INTERVAL_MIN = 3.0
 # Events within this many slicer-minutes of their layer's start happen at the layer change.
 LAYER_START_TOLERANCE = 1.0
 
@@ -138,10 +142,15 @@ class PaceMeter:
     """Real minutes per printer-minute, over the last ``PACE_WINDOW_MIN`` minutes of printing.
 
     A drop of the printer's remaining time by 1 or 2 counts as that many printer-minutes
-    (two can land in one update). A bigger jump means the slicer budgeted time for
-    something that went faster, like a filament change on the same spool; it counts as
-    one, so it doesn't make the print look faster. Paused time and the partial minute
-    before the first drop aren't counted.
+    (two can land in one update). These are skipped, because they say nothing about
+    printing speed:
+
+    - the start sequence and the first layer, which run at their own speed (the start
+      sequence's length varies a lot, and the first layer is printed slowly);
+    - a bigger jump: the slicer budgeted time for something that went faster, like a
+      filament change on the same spool;
+    - a printer-minute that took over ``PACE_MAX_INTERVAL_MIN`` real minutes;
+    - paused time, and the partial minute before the first drop.
     """
 
     def __init__(self) -> None:
@@ -152,14 +161,15 @@ class PaceMeter:
         self._last_status: str | None = None
         self._ticked = False
 
-    def observe(self, value: float | None, status: str | None, now: datetime) -> None:
-        if self._last_time is not None and status == PRINTER_RUNNING and self._last_status == PRINTER_RUNNING:
+    def observe(self, value: float | None, status: str | None, now: datetime, layer: int | None = None) -> None:
+        printing = status == PRINTER_RUNNING and layer is not None and layer >= PACE_FIRST_LAYER
+        if self._last_time is not None and printing and self._last_status == PRINTER_RUNNING:
             self._pending += (now - self._last_time).total_seconds() / 60
         if value is not None and self._last_value is not None and value != self._last_value:
-            if status == PRINTER_RUNNING and value < self._last_value:
-                if self._ticked:
-                    drop = self._last_value - value
-                    self._intervals.append((self._pending, drop if drop <= 2 else 1.0))
+            if printing and value < self._last_value:
+                drop = self._last_value - value
+                if self._ticked and drop <= 2 and self._pending <= PACE_MAX_INTERVAL_MIN * drop:
+                    self._intervals.append((self._pending, drop))
                     while self._real_minutes() - self._intervals[0][0] >= PACE_WINDOW_MIN:
                         self._intervals.popleft()
                 self._ticked = True
@@ -223,7 +233,7 @@ class Estimator:
 
     def observe(self, snap: PrinterSnapshot, now: datetime) -> None:
         """Learn pace and rate factor from a printer update. Repeated identical readings count once."""
-        self.pace_meter.observe(snap.remaining_min, snap.status, now)
+        self.pace_meter.observe(snap.remaining_min, snap.status, now, snap.layer)
         if snap.status != PRINTER_RUNNING or snap.remaining_min is None:
             return
         reading = (snap.remaining_min, snap.progress_pct, snap.layer)
