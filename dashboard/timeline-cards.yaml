@@ -96,6 +96,13 @@ cards:
   # Device settings go back to the defaults (set in the integration's options) when the print ends.
   - type: custom:collapsable-cards
     defaultOpen: false
+    # Let the title row fill the width, and blend its card into the surrounding one
+    # (standard Home Assistant card theme variables, applied to the title row only).
+    buttonStyle: >-
+      display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px;
+      padding: 0 16px 0 0;
+      --ha-card-background: transparent; --card-background-color: transparent;
+      --ha-card-border-width: 0; --ha-card-box-shadow: none;
     title_card:
       type: custom:mushroom-template-card
       entity: sensor.a1_timeline_alert_recipients
