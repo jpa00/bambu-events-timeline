@@ -2,21 +2,26 @@
 
 No Home Assistant imports here, so this can be tested on its own.
 
-The printer reports its own remaining time (``R_p``). The slicer's timeline
-says how many slicer-minutes are left when each event is reached
-(``event.remaining_min``). The two are linked by a rate factor ``k`` = real
-minutes per slicer minute, which absorbs speed-profile changes, skipped
-objects and slicer error:
+The printer reports its own remaining time (``R_p``, whole minutes rounded down).
+On an A1 at standard speed this is simply the slicer's estimate passed through:
+it doesn't adapt to how the print is really going. The slicer's timeline says
+how many slicer-minutes are left when each event is reached
+(``event.remaining_min``). So:
 
-    minutes until event = R_p - event.remaining_min * k
+    minutes until event = (R_p - event.remaining_min * k) * pace
 
-``k`` is learned while printing by comparing ``R_p`` with the slicer position,
-which is looked up from the reported progress percentage and layer. While the
-printer is paused, ``R_p`` stops moving, so the countdown freezes as well.
+``pace`` is measured: real minutes per printer-minute over the last stretch of
+printing, pauses left out. A print running 3 % slower than the slicer thought
+has a pace of 1.03. ``k`` is the ratio between the printer's remaining time and
+the slicer's timeline. It stays at 1 unless the two clearly part ways, which
+could happen if the firmware rescales its estimate after a speed change.
+
+While the printer is paused, ``R_p`` stops moving, so the countdown freezes too.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -39,6 +44,12 @@ DUE_TIMEOUT = timedelta(minutes=3)
 MIN_SLICER_MINUTES_FOR_K = 10.0
 K_LIMITS = (0.3, 3.0)
 K_SMOOTHING = 0.3
+# Below this difference from 1, k is just measurement noise and isn't applied.
+K_DEADBAND = 0.03
+# Pace is measured over this much printing time, and only used once there is enough of it.
+PACE_WINDOW_MIN = 20.0
+PACE_MIN_DATA_MIN = 10.0
+PACE_LIMITS = (0.8, 1.25)
 # Events within this many slicer-minutes of their layer's start happen at the layer change.
 LAYER_START_TOLERANCE = 1.0
 
@@ -115,12 +126,60 @@ class EventState:
     """The estimate without the safety margin, for calibration."""
 
 
+class PaceMeter:
+    """Real minutes per printer-minute, over the last ``PACE_WINDOW_MIN`` minutes of printing.
+
+    A drop of the printer's remaining time by 1 or 2 counts as that many printer-minutes
+    (two can land in one update). A bigger jump means the slicer budgeted time for
+    something that went faster, like a filament change on the same spool; it counts as
+    one, so it doesn't make the print look faster. Paused time and the partial minute
+    before the first drop aren't counted.
+    """
+
+    def __init__(self) -> None:
+        self._intervals: deque[tuple[float, float]] = deque()
+        self._pending = 0.0
+        self._last_time: datetime | None = None
+        self._last_value: float | None = None
+        self._last_status: str | None = None
+        self._ticked = False
+
+    def observe(self, value: float | None, status: str | None, now: datetime) -> None:
+        if self._last_time is not None and status == PRINTER_RUNNING and self._last_status == PRINTER_RUNNING:
+            self._pending += (now - self._last_time).total_seconds() / 60
+        if value is not None and self._last_value is not None and value != self._last_value:
+            if status == PRINTER_RUNNING and value < self._last_value:
+                if self._ticked:
+                    drop = self._last_value - value
+                    self._intervals.append((self._pending, drop if drop <= 2 else 1.0))
+                    while self._real_minutes() - self._intervals[0][0] >= PACE_WINDOW_MIN:
+                        self._intervals.popleft()
+                self._ticked = True
+            else:
+                # Went up, or changed while not printing: start the current minute over.
+                self._ticked = False
+            self._pending = 0.0
+        self._last_time, self._last_value, self._last_status = now, value, status
+
+    def _real_minutes(self) -> float:
+        return sum(real for real, _ in self._intervals)
+
+    @property
+    def pace(self) -> float:
+        measured = self._real_minutes()
+        printer_minutes = sum(minutes for _, minutes in self._intervals)
+        if measured < PACE_MIN_DATA_MIN or printer_minutes <= 0:
+            return 1.0
+        return min(max(measured / printer_minutes, PACE_LIMITS[0]), PACE_LIMITS[1])
+
+
 class Estimator:
     def __init__(self, parsed: ParsedPrint, margin_min: float = 0.5, margin_pct: float = 0.0, k: float = 1.0):
         self.parsed = parsed
         self.margin_min = margin_min
         self.margin_pct = margin_pct
         self.k = k
+        self.pace_meter = PaceMeter()
         self._percent_ranges: dict[int, tuple[int, int]] = {}
         for percent, remaining in parsed.progress:
             low, high = self._percent_ranges.get(percent, (remaining, remaining))
@@ -146,8 +205,17 @@ class Estimator:
                 estimate = upper if estimate is None else min(max(estimate, lower), upper)
         return estimate
 
-    def observe(self, snap: PrinterSnapshot) -> None:
-        """Learn the rate factor from a printer update. Repeated identical readings are only counted once."""
+    @property
+    def pace(self) -> float:
+        return self.pace_meter.pace
+
+    @property
+    def effective_k(self) -> float:
+        return self.k if abs(self.k - 1.0) > K_DEADBAND else 1.0
+
+    def observe(self, snap: PrinterSnapshot, now: datetime) -> None:
+        """Learn pace and rate factor from a printer update. Repeated identical readings count once."""
+        self.pace_meter.observe(snap.remaining_min, snap.status, now)
         if snap.status != PRINTER_RUNNING or snap.remaining_min is None:
             return
         reading = (snap.remaining_min, snap.progress_pct, snap.layer)
@@ -157,7 +225,9 @@ class Estimator:
         slicer_left = self.slicer_remaining(snap)
         if slicer_left is None or slicer_left < MIN_SLICER_MINUTES_FOR_K:
             return
-        k_now = min(max(snap.remaining_min / slicer_left, K_LIMITS[0]), K_LIMITS[1])
+        # The printer rounds down while the slicer position is mid-minute: compare like with like.
+        printer_left = snap.remaining_precise if snap.remaining_precise is not None else snap.remaining_min + 0.5
+        k_now = min(max(printer_left / slicer_left, K_LIMITS[0]), K_LIMITS[1])
         self.k += K_SMOOTHING * (k_now - self.k)
 
     def raw_minutes_until(self, event: TimelineEvent, snap: PrinterSnapshot) -> float | None:
@@ -165,10 +235,10 @@ class Estimator:
         if snap.status == PRINTER_PREPARING and self.parsed.total_min is not None:
             return self.parsed.total_min - event.remaining_min
         if (remaining := snap.best_remaining) is not None:
-            return remaining - event.remaining_min * self.k
+            return (remaining - event.remaining_min * self.effective_k) * self.pace
         slicer_left = self.slicer_remaining(snap)
         if slicer_left is not None:
-            return (slicer_left - event.remaining_min) * self.k
+            return (slicer_left - event.remaining_min) * self.effective_k * self.pace
         return None
 
     def with_margin(self, minutes: float) -> float:

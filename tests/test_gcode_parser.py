@@ -151,3 +151,42 @@ def test_ams_swap_is_not_an_event():
 )
 def test_parse_duration(text, minutes):
     assert parse_duration(text) == (pytest.approx(minutes) if minutes is not None else None)
+
+
+def test_filament_changes_are_recorded_but_not_events():
+    parsed = parse_gcode_file(AMS_FIXTURE)
+    changes = [(c.layer, c.filament, c.budget_min) for c in parsed.filament_changes if c.layer > 0]
+    assert changes == [(3, 2, 1.0), (14, 3, 1.0), (24, 2, 1.0)]
+    assert all(change.event is None for change in parsed.filament_changes)
+
+
+def test_pause_inside_filament_change_is_one_event():
+    """Without an AMS, a pause in the printer's change-filament G-code makes each change a manual step."""
+    parsed = parse_gcode_lines(
+        lines("""
+; total estimated time: 1h
+M73 P0 R60
+M73 L1
+M73 P40 R35
+M73 L2
+M620 S1A
+M400 U1
+T1
+M400 U1
+M73 P45 R33
+M621 S1A
+M73 L3
+""")
+    )
+    assert len(parsed.events) == 1
+    event = parsed.events[0]
+    assert (event.kind, event.layer, event.description) == (KIND_PAUSE, 2, "Filament change (filament 2)")
+    assert event.remaining_min == 35.5
+    assert parsed.filament_changes[0].event is event
+    assert parsed.filament_changes[0].budget_min == 2.0
+
+
+def test_filament_change_without_end_marker_closes_at_next_layer():
+    parsed = parse_gcode_lines(lines("M73 P0 R10\nM73 L1\nM620 S2A\nT2\nM73 L2\nM400 U1\n"))
+    assert [e.description for e in parsed.events] == ["Pause"]
+    assert parsed.filament_changes[0].filament == 3

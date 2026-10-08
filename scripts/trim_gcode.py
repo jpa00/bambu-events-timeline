@@ -23,7 +23,7 @@ KEEP = re.compile(
     r"|; (PAUSE_PRINTING|CUSTOM_GCODE)$"
     r"|M73 "
     r"|M400 U1|M600|M601"
-    r"|M620 S\d+A|T\d+\b)"
+    r"|M62[01] S\d+A|T\d+\b)"
 )
 # Lines kept after a pause or custom G-code tag, so the block boundaries survive.
 AFTER_TAG = 3

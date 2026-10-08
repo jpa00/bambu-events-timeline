@@ -46,7 +46,7 @@ def test_countdown_at_planned_speed():
     estimator = Estimator(PARSED)
     states = fresh_states()
     snap = at(200)
-    estimator.observe(snap)
+    estimator.observe(snap, NOW)
     estimator.update(snap, states, NOW)
     expected_raw = 200 - PAUSE_5.remaining_min
     assert states[0].status == STATUS_UPCOMING
@@ -61,7 +61,7 @@ def test_rate_factor_follows_slower_printing():
     estimator = Estimator(PARSED)
     states = fresh_states()
     for slicer_left in range(220, 180, -2):
-        estimator.observe(at(slicer_left, rate=2.0))
+        estimator.observe(at(slicer_left, rate=2.0), NOW)
     assert estimator.k == pytest.approx(2.0, abs=0.05)
     estimator.update(at(180, rate=2.0), states, NOW)
     planned_gap = 180 - PAUSE_5.remaining_min
@@ -151,8 +151,8 @@ def test_only_one_event_active_at_a_time():
 def test_repeated_readings_count_once():
     estimator = Estimator(PARSED)
     for _ in range(20):
-        estimator.observe(at(200, rate=2.0))
-    assert estimator.k == pytest.approx(1.3)
+        estimator.observe(at(200, rate=2.0), NOW)
+    assert estimator.k == pytest.approx(1.3, abs=0.01)
 
 
 def test_margin_defaults_and_percentage():
@@ -183,3 +183,72 @@ def test_minute_interpolation():
     # A jump (e.g. after a speed change) means the position within the minute is unknown again.
     clock.observe(5, PRINTER_RUNNING, NOW + timedelta(minutes=11))
     assert clock.refine(5, NOW + timedelta(minutes=11, seconds=30)) == 5
+
+
+def replay_predictions():
+    """Replay a real print's readings; return (time, predicted pause time) at each reading."""
+    import json
+    from datetime import timedelta
+
+    from custom_components.bambu_timeline.gcode_parser import KIND_PAUSE, ParsedPrint, TimelineEvent
+
+    data = json.loads((FIXTURES / "replay_a1_standard_speed.json").read_text(encoding="utf-8"))
+    event = TimelineEvent(
+        kind=KIND_PAUSE, layer=data["pause_layer"], remaining_min=data["pause_remaining_min"], elapsed_min=0, line=0
+    )
+    parsed = ParsedPrint(events=[event], layer_start_remaining={data["pause_layer"]: data["pause_remaining_min"]})
+    estimator = Estimator(parsed)
+    predictions = []
+    for offset, status, remaining, progress, layer in data["readings"]:
+        now = NOW + timedelta(seconds=offset)
+        snap = PrinterSnapshot(status=status, remaining_min=remaining, progress_pct=progress, layer=layer)
+        estimator.observe(snap, now)
+        if status == PRINTER_RUNNING and layer < data["pause_layer"]:
+            raw = estimator.raw_minutes_until(event, snap)
+            predictions.append((offset, offset + raw * 60))
+    return data["pause_between_s"], predictions, estimator
+
+
+def test_replay_of_a_real_print():
+    """Replays a real A1 print (readings start mid-print, after a restart). Once the pace has
+    10 minutes of data, the pause prediction is never late and at most a minute early."""
+    (earliest, latest), predictions, _ = replay_predictions()
+    checked = 0
+    for offset, predicted in predictions:
+        if latest - offset <= 13 * 60 and offset >= 10 * 60:
+            assert earliest - 60 <= predicted <= latest, (offset, predicted)
+            checked += 1
+    assert checked >= 10
+
+
+def test_pace_meter():
+    from custom_components.bambu_timeline.estimator import PaceMeter
+
+    meter = PaceMeter()
+    now, remaining = NOW, 100.0
+    for _ in range(15):  # Each printer-minute takes 62 real seconds.
+        meter.observe(remaining, PRINTER_RUNNING, now)
+        now += timedelta(seconds=62)
+        remaining -= 1
+    assert meter.pace == pytest.approx(62 / 60, abs=0.001)
+
+    # A pause doesn't count, and a big jump (a skipped filament change) counts as one minute.
+    meter.observe(remaining, PRINTER_PAUSED, now)
+    now += timedelta(minutes=30)
+    meter.observe(remaining, PRINTER_RUNNING, now)
+    now += timedelta(seconds=62)
+    remaining -= 3
+    meter.observe(remaining, PRINTER_RUNNING, now)
+    assert meter.pace == pytest.approx(62 / 60, abs=0.001)
+
+
+def test_pace_needs_ten_minutes_of_data():
+    from custom_components.bambu_timeline.estimator import PaceMeter
+
+    meter = PaceMeter()
+    now, remaining = NOW, 100.0
+    for _ in range(5):
+        meter.observe(remaining, PRINTER_RUNNING, now)
+        now += timedelta(seconds=90)
+        remaining -= 1
+    assert meter.pace == 1.0

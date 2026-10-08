@@ -5,6 +5,8 @@ A Home Assistant integration that tells you how long it is until your Bambu Lab 
 If you add a pause or some custom G-code at a layer in the slicer, the printer will stop or do something at that point in the print. Neither the printer nor the Bambu Lab integration tells you when that will be. This integration reads the sliced G-code of the current print, finds those events, keeps a running countdown to each one, and can send a heads-up to your phone a few minutes before.
 
 > **Status: early.** It works on my prints, but the countdown hasn't been tuned against much real data yet.
+>
+> **The countdown is an estimate, and can't be exact.** Expect it to be about right close to an event and rougher further out. It can also be caught out, for example by an event that comes right after a filament change. [Why it can't be exact](#how-accurate-is-it) explains the reasons before you rely on it.
 
 ## Before you use this
 
@@ -22,9 +24,10 @@ That also means:
 |---|---|---|
 | Add pause (layer slider) | Pause | On |
 | Add custom G-code (layer slider) | Custom G-code. If the G-code contains a pause command (`M400 U1`, `M600`, `M601`), it counts as a pause instead. | Off |
-| Filament changes, AMS swaps | Ignored | – |
+| Filament changes, AMS swaps | Ignored, unless the change includes a pause (see below) | – |
+| Filament change with a pause in the printer's change-filament G-code | One "Filament change" event | On |
 
-Filament changes are ignored on purpose. With an AMS, the slicer turns every filament change into an automatic swap, and the G-code doesn't say whether a swap actually needs a person.
+Plain filament changes are ignored on purpose. With an AMS, the slicer turns every filament change into an automatic swap, and the G-code doesn't say whether a swap actually needs a person. Without an AMS, the usual way to change filament by hand is to add a pause (`M400 U1`) to the printer's change-filament G-code in the slicer's machine settings. The integration spots that pause inside the change and shows the change as a single "Filament change" event.
 
 ## What you need
 
@@ -74,11 +77,26 @@ A phone that gets the Companion app after this integration was set up shows up o
 
 ## How the countdown works
 
-The slicer writes its own time estimate into the G-code every minute or so. From that, the integration knows how many slicer-minutes before the end of the print each event is. While printing, it compares the printer's own remaining time with where the print is on the slicer's timeline, and uses that ratio to convert the event's position into real minutes. In practice:
+The slicer writes its own time estimate into the G-code every minute or so. From that, the integration knows how many slicer-minutes before the end of the print each event is. While printing, it follows the printer's remaining time, and measures how fast the print is really going compared to that: real minutes per printer-minute, over the last 20 minutes of printing. In practice:
 
-- **Pauses** (planned or not) stop the countdown. It continues when the print resumes.
-- **Speed changes** (silent, sport, ludicrous) are followed after a few minutes.
-- **It runs early on purpose.** Countdowns are shortened by a safety margin of half a minute, and they round down to whole minutes, so they reach zero up to a minute and a half before the event. On my first real print, the estimate itself was within seconds of the actual pause. The margin is adjustable in the options.
+- **Pauses** (planned or not) stop the countdown. It continues when the print resumes, and paused time doesn't count towards the measured pace.
+- **A print running slower or faster than the slicer expected** is corrected for once there are 10 minutes of data.
+- **Speed changes** (silent, sport, ludicrous) are picked up by the same measurement over the following minutes. I haven't tested this on a real print yet.
+- **It runs early on purpose.** Countdowns are shortened by a safety margin of half a minute, and they round down to whole minutes, so they reach zero up to a minute and a half before the event. The margin is adjustable in the options.
+
+## How accurate is it?
+
+Close to an event, usually within a minute, and on the early side. Further out, expect it to be a few minutes off. That's about as good as it gets with the information available, for these reasons:
+
+- **There is no real timeline, only the slicer's estimate.** The printer's own "remaining time" is just the slicer's estimate passed through, in whole minutes. It doesn't learn from how the print is actually going.
+- **Real prints drift from the estimate.** On a long print of mine, printing ran about 3 % slower than the slicer thought. Over a 3-hour wait, that's 5 minutes. The integration measures the actual pace and corrects for it, but it needs 10 minutes of printing first, and the pace changes through a print as the layers change.
+- **Filament changes can jump the clock.** The slicer budgets a few minutes for each filament change. If a change is quicker than that, for example a different filament profile on the same spool, the printer's remaining time drops by several minutes at once. An event after such a change then comes **earlier** than the countdown said, by up to the time the slicer budgeted. The countdown corrects itself as soon as the jump happens.
+- **Whole minutes.** The printer reports remaining time rounded down to whole minutes, so anything finer is an informed estimate. That's what the "~" in "in ~45 s" means.
+- **Things nobody can know in advance:** how long you take at a pause, objects skipped mid-print, a speed change, a filament runout.
+
+The countdown keeps correcting itself as the print goes on, so it gets more accurate as the event gets closer. The heads-up notification goes out a few minutes early on purpose, to leave room for all of the above.
+
+**Please don't open issues about it being a minute or two off.** That's expected. If it's consistently off by more, or late rather than early, an issue with the diagnostics attached (see below) is welcome.
 
 The times it finds should match what OrcaSlicer shows when you hover an event's icon on the preview's layer slider, to within a few seconds. Without hovering, Orca shows the layer's *end* time instead, which can be quite a bit later.
 

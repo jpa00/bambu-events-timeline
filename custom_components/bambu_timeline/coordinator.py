@@ -290,7 +290,7 @@ class TimelineCoordinator:
         session = self.session
         if session and session.estimator:
             if printer_changed:
-                session.estimator.observe(snap)
+                session.estimator.observe(snap, now)
             before = [(s.status, s.status_since) for s in session.states]
             before_raw = [s.raw_minutes_until for s in session.states]
             session.estimator.update(snap, session.states, now)
@@ -613,6 +613,7 @@ class TimelineCoordinator:
             "slicer_total_minutes": parsed.total_min if parsed else None,
             "total_layers": parsed.total_layers if parsed else None,
             "rate_factor": session.estimator.k if session.estimator else None,
+            "pace": session.estimator.pace if session.estimator else None,
             "events": [
                 {
                     **event_attributes(event, state, parsed),
@@ -620,6 +621,11 @@ class TimelineCoordinator:
                     "remaining_at_event": event.remaining_min,
                 }
                 for event, state, alert in zip(session.events, session.states, session.alerts)
+            ],
+            "filament_changes": [
+                {"layer": c.layer, "filament": c.filament, "slicer_budget_min": c.budget_min, "is_event": c.event is not None}
+                for c in (parsed.filament_changes if parsed else [])
+                if c.layer > 0
             ],
             "calibration": self.calibration_report(session),
             "log": list(session.samples),
@@ -643,6 +649,7 @@ class TimelineCoordinator:
                 "speed": snap.speed,
                 "slicer_remaining": estimator.slicer_remaining(snap) if estimator else None,
                 "k": round(estimator.k, 4) if estimator else None,
+                "pace": round(estimator.pace, 4) if estimator else None,
                 "next_minutes": next(
                     (s.minutes_until for s in session.states if s.minutes_until is not None), None
                 ),

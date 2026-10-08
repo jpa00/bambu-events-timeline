@@ -92,6 +92,7 @@ class GcodeStatusSensor(TimelineEntity, SensorEntity):
             "slicer_total_minutes": round(parsed.total_min, 1) if parsed and parsed.total_min else None,
             "events": len(parsed.events) if parsed else None,
             "rate_factor": round(estimator.k, 3) if estimator else None,
+            "pace": round(estimator.pace, 3) if estimator else None,
             "error": self.coordinator.parse_error,
         }
 
