@@ -17,6 +17,12 @@ the slicer's timeline. It stays at 1 unless the two clearly part ways, which
 could happen if the firmware rescales its estimate after a speed change.
 
 While the printer is paused, ``R_p`` stops moving, so the countdown freezes too.
+
+Filament changes on the external spool: the printer can't swap filament there by
+itself, so a change without a pause can only be a profile change on the same spool,
+and it takes almost no time. The slicer still budgets time for it, which would make
+events after it come earlier than counted down. While the printer feeds from the
+external spool, those budgets are left out of the countdown.
 """
 
 from __future__ import annotations
@@ -64,6 +70,8 @@ class PrinterSnapshot:
     speed: str | None = None
     remaining_precise: float | None = None
     """``remaining_min`` refined to within the current minute (see MinuteInterpolator), if known."""
+    on_external_spool: bool = False
+    """The printer is feeding from the external spool, not the AMS."""
 
     @property
     def best_remaining(self) -> float | None:
@@ -234,12 +242,30 @@ class Estimator:
         """Best estimate without the safety margin. Negative means the event's position has passed."""
         if snap.status == PRINTER_PREPARING and self.parsed.total_min is not None:
             return self.parsed.total_min - event.remaining_min
+        k = self.effective_k
         if (remaining := snap.best_remaining) is not None:
-            return (remaining - event.remaining_min * self.effective_k) * self.pace
+            skipped = self.skipped_change_time(event, remaining / k, snap)
+            return (remaining - (event.remaining_min + skipped) * k) * self.pace
         slicer_left = self.slicer_remaining(snap)
         if slicer_left is not None:
-            return (slicer_left - event.remaining_min) * self.effective_k * self.pace
+            skipped = self.skipped_change_time(event, slicer_left, snap)
+            return (slicer_left - event.remaining_min - skipped) * k * self.pace
         return None
+
+    def skipped_change_time(self, event: TimelineEvent, position: float, snap: PrinterSnapshot) -> float:
+        """Slicer minutes budgeted for filament changes before ``event`` that won't really take time.
+
+        ``position`` is the current point in the print, in slicer minutes left. Only changes
+        still ahead count: once one has happened, the printer's remaining time has already
+        jumped past its budget.
+        """
+        if not snap.on_external_spool:
+            return 0.0
+        return sum(
+            change.budget_min
+            for change in self.parsed.filament_changes
+            if change.event is None and event.remaining_min < change.remaining_min <= position
+        )
 
     def with_margin(self, minutes: float) -> float:
         """Make an estimate early rather than late."""

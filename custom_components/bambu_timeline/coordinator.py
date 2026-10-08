@@ -35,6 +35,7 @@ from .const import (
     CONF_SHOW_SECONDS,
     DEFAULT_OPTIONS,
     DOMAIN,
+    EXTERNAL_SPOOL_AMS_INDEXES,
     FAST_UPDATE_INTERVAL_S,
     FILE_SEARCH_INTERVAL_S,
     FILE_SEARCH_TIMEOUT_S,
@@ -254,7 +255,17 @@ class TimelineCoordinator:
             progress_pct=self._number("print_progress"),
             layer=int(layer) if layer is not None else None,
             speed=self._state("speed_profile"),
+            on_external_spool=self._on_external_spool(),
         )
+
+    def _on_external_spool(self) -> bool:
+        if self._state("active_tray") in (None, "none"):
+            return False
+        state = self.hass.states.get(self.entity_ids["active_tray"])
+        try:
+            return int(state.attributes.get("ams_index")) in EXTERNAL_SPOOL_AMS_INDEXES
+        except (TypeError, ValueError):
+            return False
 
     def _print_key(self) -> str:
         """The print's name, or "" while it isn't known (e.g. the sensor is briefly unavailable).
@@ -647,6 +658,7 @@ class TimelineCoordinator:
                 "progress": snap.progress_pct,
                 "layer": snap.layer,
                 "speed": snap.speed,
+                "external_spool": snap.on_external_spool,
                 "slicer_remaining": estimator.slicer_remaining(snap) if estimator else None,
                 "k": round(estimator.k, 4) if estimator else None,
                 "pace": round(estimator.pace, 4) if estimator else None,

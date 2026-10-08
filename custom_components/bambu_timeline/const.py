@@ -48,7 +48,11 @@ BAMBU_KEYS = (
     "subtask_name",
     "gcode_file",
     "stage",
+    "active_tray",
 )
+
+# ha-bambulab's active tray sensor reports the external spool as AMS index 254 or 255.
+EXTERNAL_SPOOL_AMS_INDEXES = (254, 255)
 
 # ha-bambulab keeps downloaded print files here, relative to the HA config folder.
 BAMBU_CACHE_DIR = "www/media/ha-bambulab"

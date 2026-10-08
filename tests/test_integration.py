@@ -69,8 +69,13 @@ def bambu_entry(hass: HomeAssistant) -> MockConfigEntry:
     return entry
 
 
-def printer(hass: HomeAssistant, status: str, layer: int = 0, remaining: float = 0, progress: int = 0) -> None:
+def printer(
+    hass: HomeAssistant, status: str, layer: int = 0, remaining: float = 0, progress: int = 0, external: bool = False
+) -> None:
     hass.states.async_set("sensor.a1_print_status", status)
+    hass.states.async_set(
+        "sensor.a1_active_tray", "Generic TPU", {"ams_index": 255 if external else 0, "tray_index": 254 if external else 1}
+    )
     hass.states.async_set("sensor.a1_current_layer", str(layer))
     hass.states.async_set("sensor.a1_total_layers", "24")
     hass.states.async_set("sensor.a1_remaining_time", str(remaining), {"unit_of_measurement": "min"})
@@ -237,14 +242,14 @@ PHONE = "switch.a1_timeline_notify_alex_phone"
 TABLET = "switch.a1_timeline_notify_family_tablet"
 
 
-def printer_at(hass: HomeAssistant, slicer_left: float, status: str = "running") -> None:
+def printer_at(hass: HomeAssistant, slicer_left: float, status: str = "running", external: bool = False) -> None:
     """Report the printer at a given point of the fixture print, running exactly as planned."""
     from custom_components.bambu_timeline.gcode_parser import parse_gcode_file
 
     parsed = parse_gcode_file(FIXTURES / "orca_a1_pauses_and_message.gcode")
     progress = max(p for p, r in parsed.progress if r >= int(slicer_left))
     layer = max((n for n, start in parsed.layer_start_remaining.items() if start >= slicer_left), default=1)
-    printer(hass, status, layer=layer, remaining=int(slicer_left), progress=progress)
+    printer(hass, status, layer=layer, remaining=int(slicer_left), progress=progress, external=external)
 
 
 @pytest.fixture
@@ -503,3 +508,16 @@ async def test_calibration_record_kept_after_print(hass: HomeAssistant, bambu_en
     await settle(hass)
     data = await async_get_config_entry_diagnostics(hass, entry)
     assert data["last_finished_print"]["calibration"][0]["layer"] == 5
+
+
+async def test_external_spool_changes_shorten_the_countdown(hass: HomeAssistant, bambu_entry):
+    await setup_timeline(hass, bambu_entry)
+    cache_gcode(hass)
+    printer_at(hass, 190)
+    await settle(hass)
+    on_ams = hass.states.get(EVENT_1).attributes["minutes_until"]
+
+    # Same position, but feeding from the external spool: the layer-3 change won't take its 1 minute.
+    printer_at(hass, 190, external=True)
+    await settle(hass)
+    assert hass.states.get(EVENT_1).attributes["minutes_until"] == on_ams - 1

@@ -252,3 +252,35 @@ def test_pace_needs_ten_minutes_of_data():
         now += timedelta(seconds=90)
         remaining -= 1
     assert meter.pace == 1.0
+
+
+def test_profile_changes_on_external_spool_take_no_time():
+    """The fixture has a filament change at layer 3 (slicer budget 1 min) before the pause at layer 5."""
+    change = next(c for c in PARSED.filament_changes if c.layer == 3)
+    assert change.budget_min == 1.0
+    estimator = Estimator(PARSED)
+    before_change = at(190)
+    ams = estimator.raw_minutes_until(PAUSE_5, before_change)
+    before_change.on_external_spool = True
+    external = estimator.raw_minutes_until(PAUSE_5, before_change)
+    assert ams - external == pytest.approx(change.budget_min)
+
+    # Once the change is behind, the printer's remaining time has already jumped: nothing to subtract.
+    after_change = at(170)
+    after_change.on_external_spool = True
+    assert estimator.skipped_change_time(PAUSE_5, after_change.best_remaining, after_change) == 0
+
+    # Events before the change aren't affected either.
+    assert estimator.skipped_change_time(PAUSE_5, 165, before_change) == 0
+
+
+def test_change_with_a_pause_is_not_skipped():
+    from custom_components.bambu_timeline.gcode_parser import parse_gcode_lines
+
+    parsed = parse_gcode_lines(
+        "M73 P0 R60\nM73 L1\nM73 P10 R50\nM620 S1A\nM400 U1\nM73 P20 R45\nM621 S1A\nM73 L2\nM73 P50 R30\nM400 U1\n".splitlines()
+    )
+    change_event, later_pause = parsed.events
+    estimator = Estimator(parsed)
+    snap = PrinterSnapshot(status=PRINTER_RUNNING, remaining_min=55, layer=1, on_external_spool=True)
+    assert estimator.skipped_change_time(later_pause, 55, snap) == 0  # A real (manual) change takes real time.
