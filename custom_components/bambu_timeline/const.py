@@ -36,7 +36,8 @@ DEFAULT_OPTIONS = {
     CONF_SHOW_SECONDS: False,
 }
 
-# ha-bambulab printer sensors we read, by entity description key.
+# ha-bambulab printer sensors we read, by entity description key. "active_tray" only
+# exists while an AMS is connected, so it's optional.
 # Their unique IDs are "<serial>_<key>".
 BAMBU_KEYS = (
     "print_status",
@@ -51,8 +52,16 @@ BAMBU_KEYS = (
     "active_tray",
 )
 
+OPTIONAL_BAMBU_KEYS = ("active_tray",)
+
 # ha-bambulab's active tray sensor reports the external spool as AMS index 254 or 255.
 EXTERNAL_SPOOL_AMS_INDEXES = (254, 255)
+# The external spool is its own ha-bambulab device ("<model>_<serial>_ExternalSpool", or
+# "...ExternalSpool2" for a second one). Its entities' unique IDs contain this marker. The
+# filament sensor has an "active" attribute, and a binary sensor is on while the spool is in use.
+EXTERNAL_SPOOL_MARKER = "_ExternalSpool"
+EXTERNAL_SPOOL_SENSOR_SUFFIX = "_external_spool"
+EXTERNAL_SPOOL_ACTIVE_SUFFIX = "_active_ams"
 
 # ha-bambulab keeps downloaded print files here, relative to the HA config folder.
 BAMBU_CACHE_DIR = "www/media/ha-bambulab"

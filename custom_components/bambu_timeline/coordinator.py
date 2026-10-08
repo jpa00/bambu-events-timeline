@@ -26,6 +26,7 @@ from .const import (
     CALIBRATION_MAX_SAMPLES,
     CALIBRATION_SAMPLE_INTERVAL_S,
     CONF_ALERT_ON_EVENT,
+    CONF_BAMBU_ENTRY_ID,
     CONF_CUSTOM_GCODE_ALERTS,
     CONF_DEFAULT_RECIPIENTS,
     CONF_LEAD_TIME,
@@ -36,11 +37,15 @@ from .const import (
     CONF_SHOW_SECONDS,
     DEFAULT_OPTIONS,
     DOMAIN,
+    EXTERNAL_SPOOL_ACTIVE_SUFFIX,
     EXTERNAL_SPOOL_AMS_INDEXES,
+    EXTERNAL_SPOOL_MARKER,
+    EXTERNAL_SPOOL_SENSOR_SUFFIX,
     FAST_UPDATE_INTERVAL_S,
     FILE_SEARCH_INTERVAL_S,
     FILE_SEARCH_TIMEOUT_S,
     LOGGER,
+    OPTIONAL_BAMBU_KEYS,
     PARSE_ERROR,
     PARSE_IDLE,
     PARSE_NO_EVENTS,
@@ -114,6 +119,7 @@ class TimelineCoordinator:
         self.serial: str = entry.data[CONF_SERIAL]
         self.model: str = entry.data.get(CONF_MODEL) or "Printer"
         self.entity_ids: dict[str, str] = {}
+        self.spool_entity_ids: list[str] = []
         self.session: PrintSession | None = None
         self.parse_status = PARSE_IDLE
         self.parse_error: str | None = None
@@ -189,19 +195,37 @@ class TimelineCoordinator:
                 )
             if entity_id:
                 found[key] = entity_id
-        if found == self.entity_ids and self._tracking_unsub:
+        spools = self._external_spool_entities(registry)
+        if found == self.entity_ids and spools == self.spool_entity_ids and self._tracking_unsub:
             return
-        missing = sorted(set(BAMBU_KEYS) - set(found))
-        if missing:
-            LOGGER.debug("Printer %s: sensors not found yet: %s", self.serial, ", ".join(missing))
+        if self.missing_printer_sensors:
+            LOGGER.debug(
+                "Printer %s: sensors not found yet: %s", self.serial, ", ".join(self.missing_printer_sensors)
+            )
         self.entity_ids = found
+        self.spool_entity_ids = spools
         if self._tracking_unsub:
             self._tracking_unsub()
             self._tracking_unsub = None
-        if found:
-            self._tracking_unsub = async_track_state_change_event(
-                self.hass, list(found.values()), self._on_printer_change
+        tracked = [*found.values(), *spools]
+        if tracked:
+            self._tracking_unsub = async_track_state_change_event(self.hass, tracked, self._on_printer_change)
+
+    def _external_spool_entities(self, registry: er.EntityRegistry) -> list[str]:
+        """The external spool device's filament sensor and in-use binary sensor (ha-bambulab 2.2+)."""
+        bambu_entry_id = self.entry.data.get(CONF_BAMBU_ENTRY_ID)
+        if not bambu_entry_id:
+            return []
+        marker = f"{self.serial}{EXTERNAL_SPOOL_MARKER}"
+        return sorted(
+            entry.entity_id
+            for entry in er.async_entries_for_config_entry(registry, bambu_entry_id)
+            if marker in entry.unique_id
+            and (
+                (entry.domain == "sensor" and entry.unique_id.endswith(EXTERNAL_SPOOL_SENSOR_SUFFIX))
+                or (entry.domain == "binary_sensor" and entry.unique_id.endswith(EXTERNAL_SPOOL_ACTIVE_SUFFIX))
             )
+        )
 
     def _printer_device_entities(self, registry: er.EntityRegistry) -> list[er.RegistryEntry]:
         devices = dr.async_get(self.hass)
@@ -212,7 +236,8 @@ class TimelineCoordinator:
 
     @property
     def missing_printer_sensors(self) -> list[str]:
-        return sorted(set(BAMBU_KEYS) - set(self.entity_ids))
+        """Required printer sensors that weren't found. (The active tray sensor only exists with an AMS.)"""
+        return sorted(set(BAMBU_KEYS) - set(OPTIONAL_BAMBU_KEYS) - set(self.entity_ids))
 
     # ----- listeners ---------------------------------------------------------------------
 
@@ -246,8 +271,8 @@ class TimelineCoordinator:
 
     @callback
     def _on_tick(self, _now: datetime) -> None:
-        if len(self.entity_ids) < len(BAMBU_KEYS):
-            self._ensure_tracking()
+        # Cheap, and picks up devices ha-bambulab adds or removes on the fly (AMS units, spools).
+        self._ensure_tracking()
         self._evaluate(printer_changed=False)
 
     # ----- reading the printer -----------------------------------------------------------
@@ -286,6 +311,16 @@ class TimelineCoordinator:
         )
 
     def _on_external_spool(self) -> bool:
+        """Whether the printer is feeding from the external spool rather than an AMS."""
+        for entity_id in self.spool_entity_ids:
+            state = self.hass.states.get(entity_id)
+            if state is None:
+                continue
+            if state.domain == "binary_sensor" and state.state == "on":
+                return True
+            if state.domain == "sensor" and state.attributes.get("active") is True:
+                return True
+        # With an AMS connected, the printer's active tray sensor says it too.
         if self._state("active_tray") in (None, "none"):
             return False
         state = self.hass.states.get(self.entity_ids["active_tray"])

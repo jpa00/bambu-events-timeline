@@ -65,6 +65,21 @@ def bambu_entry(hass: HomeAssistant) -> MockConfigEntry:
         registry.async_get_or_create(
             "sensor", "bambu_lab", f"{SERIAL}_{key}", suggested_object_id=f"a1_{key}", config_entry=entry
         )
+    # ha-bambulab 2.2's external spool device.
+    registry.async_get_or_create(
+        "sensor",
+        "bambu_lab",
+        f"A1_{SERIAL}_ExternalSpool_external_spool",
+        suggested_object_id="a1_externalspool_external_spool",
+        config_entry=entry,
+    )
+    registry.async_get_or_create(
+        "binary_sensor",
+        "bambu_lab",
+        f"A1_{SERIAL}_ExternalSpool_active_ams",
+        suggested_object_id="a1_externalspool_active",
+        config_entry=entry,
+    )
     printer(hass, "idle")
     return entry
 
@@ -73,9 +88,9 @@ def printer(
     hass: HomeAssistant, status: str, layer: int = 0, remaining: float = 0, progress: int = 0, external: bool = False
 ) -> None:
     hass.states.async_set("sensor.a1_print_status", status)
-    hass.states.async_set(
-        "sensor.a1_active_tray", "Generic TPU", {"ams_index": 255 if external else 0, "tray_index": 254 if external else 1}
-    )
+    # No AMS connected: ha-bambulab has no active tray sensor then; the external spool device says it.
+    hass.states.async_set("sensor.a1_externalspool_external_spool", "Generic TPU", {"active": external})
+    hass.states.async_set("binary_sensor.a1_externalspool_active", "on" if external else "off")
     hass.states.async_set("sensor.a1_current_layer", str(layer))
     hass.states.async_set("sensor.a1_total_layers", "24")
     hass.states.async_set("sensor.a1_remaining_time", str(remaining), {"unit_of_measurement": "min"})
@@ -545,3 +560,26 @@ async def test_printer_sensor_found_by_kind_when_its_id_differs(hass: HomeAssist
     assert entry.runtime_data.entity_ids["active_tray"] == "sensor.a1_active_material"
     data = await async_get_config_entry_diagnostics(hass, entry)
     assert data["missing_printer_sensors"] == []
+
+
+async def test_external_spool_seen_through_active_tray_with_an_ams(hass: HomeAssistant, bambu_entry):
+    """With an AMS connected, the printer's active tray sensor also tells when the external spool is in use."""
+    registry = er.async_get(hass)
+    for entity_id in ("sensor.a1_externalspool_external_spool", "binary_sensor.a1_externalspool_active"):
+        registry.async_remove(entity_id)
+    entry = await setup_timeline(hass, bambu_entry)
+    coordinator = entry.runtime_data
+    assert coordinator.spool_entity_ids == []
+    hass.states.async_set("sensor.a1_active_tray", "Generic TPU", {"ams_index": 255, "tray_index": 254})
+    assert coordinator.snapshot().on_external_spool is True
+    hass.states.async_set("sensor.a1_active_tray", "Generic PLA", {"ams_index": 0, "tray_index": 1})
+    assert coordinator.snapshot().on_external_spool is False
+
+
+async def test_missing_active_tray_is_not_reported(hass: HomeAssistant, bambu_entry):
+    """The active tray sensor only exists with an AMS, so its absence isn't a problem."""
+    er.async_get(hass).async_remove("sensor.a1_active_tray")
+    entry = await setup_timeline(hass, bambu_entry)
+    data = await async_get_config_entry_diagnostics(hass, entry)
+    assert data["missing_printer_sensors"] == []
+    assert len(data["external_spool_entities"]) == 2
