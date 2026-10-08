@@ -32,8 +32,10 @@ from .const import (
     CONF_MARGIN_PCT,
     CONF_MODEL,
     CONF_SERIAL,
+    CONF_SHOW_SECONDS,
     DEFAULT_OPTIONS,
     DOMAIN,
+    FAST_UPDATE_INTERVAL_S,
     FILE_SEARCH_INTERVAL_S,
     FILE_SEARCH_TIMEOUT_S,
     LOGGER,
@@ -50,7 +52,15 @@ from .const import (
     STORAGE_VERSION,
     UPDATE_INTERVAL_S,
 )
-from .estimator import STATUS_ACTIVE, STATUS_DONE, STATUS_UPCOMING, Estimator, EventState, PrinterSnapshot
+from .estimator import (
+    STATUS_ACTIVE,
+    STATUS_DONE,
+    STATUS_UPCOMING,
+    Estimator,
+    EventState,
+    MinuteInterpolator,
+    PrinterSnapshot,
+)
 from .file_finder import find_gcode
 from .gcode_parser import KIND_PAUSE, ParsedPrint, TimelineEvent, parse_gcode_file
 from .notifier import (
@@ -63,6 +73,7 @@ from .notifier import (
     notify_targets,
     owner_name,
 )
+from .presentation import event_attributes
 
 _UNIT_TO_MINUTES = {"min": 1.0, "h": 60.0, "s": 1 / 60, "d": 1440.0, "ms": 1 / 60000}
 
@@ -85,6 +96,8 @@ class PrintSession:
     not for events that were already past when the print was first seen."""
     samples: list[dict[str, Any]] = field(default_factory=list)
     last_sample: datetime | None = None
+    calibration: list[dict[str, Any]] = field(default_factory=list)
+    """Per event: what was predicted 5 and 1 minutes ahead, and when it actually happened."""
     search_task: asyncio.Task | None = None
 
     @property
@@ -110,6 +123,10 @@ class TimelineCoordinator:
         self._evaluation_pending = False
         self._stopped = False
         self._user_names: dict[str, str] = {}
+        self._minute_clock = MinuteInterpolator()
+        self._fast_refresh_unsub: CALLBACK_TYPE | None = None
+        self.last_print: dict[str, Any] | None = None
+        """Summary and logs of the last finished print, kept for diagnostics until the next one ends."""
         self.recipients: set[str] = self._default_recipients()
         # The defaults that `recipients` was last reconciled with. Saved, so a change to the
         # defaults in the options can be applied when the integration reloads.
@@ -123,6 +140,7 @@ class TimelineCoordinator:
 
     async def async_start(self) -> None:
         self._stored = await self._store.async_load() or {}
+        self.last_print = self._stored.get("last_print")
         for target in notify_targets(self.hass).values():
             if target.user_id and (user := await self.hass.auth.async_get_user(target.user_id)):
                 self._user_names[target.user_id] = user.name or ""
@@ -138,6 +156,7 @@ class TimelineCoordinator:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        self._set_fast_refresh(False)
         if self._tracking_unsub:
             self._tracking_unsub()
             self._tracking_unsub = None
@@ -251,6 +270,9 @@ class TimelineCoordinator:
     def _evaluate(self, printer_changed: bool) -> None:
         snap = self.snapshot()
         now = dt_util.utcnow()
+        if printer_changed:
+            self._minute_clock.observe(snap.remaining_min, snap.status, now)
+        snap.remaining_precise = self._minute_clock.refine(snap.remaining_min, now)
 
         if snap.status in PRINT_ACTIVE_STATES:
             key = self._print_key()
@@ -270,15 +292,18 @@ class TimelineCoordinator:
             if printer_changed:
                 session.estimator.observe(snap)
             before = [(s.status, s.status_since) for s in session.states]
+            before_raw = [s.raw_minutes_until for s in session.states]
             session.estimator.update(snap, session.states, now)
             if session.primed:
                 self._check_notifications(session, [status for status, _ in before])
+                self._record_calibration(session, [status for status, _ in before], before_raw, now)
             else:
                 session.primed = True
             if before != [(s.status, s.status_since) for s in session.states]:
                 self._save()
             self._sample(session, snap, now)
 
+        self._set_fast_refresh(self._needs_fast_refresh())
         self._notify_listeners()
 
     def _start_session(self, key: str, now: datetime) -> None:
@@ -287,6 +312,7 @@ class TimelineCoordinator:
             started = dt_util.parse_datetime(self._stored["started"]) or now
         LOGGER.debug("Print started: %s", key or "(name not known yet)")
         self.session = PrintSession(key=key, started=started)
+        self._minute_clock = MinuteInterpolator()
         self.parse_status = PARSE_WAITING
         self.parse_error = None
         self.session.search_task = self.entry.async_create_background_task(
@@ -303,6 +329,8 @@ class TimelineCoordinator:
             for index, state in enumerate(session.states):
                 if session.notified_event[index] and state.status == STATUS_ACTIVE:
                     self._send(clear_notification(self._tag(index)))
+            if session.parsed:
+                self.last_print = self.print_summary(session, ended=dt_util.utcnow())
         self.session = None
         self.parse_status = PARSE_IDLE
         self.parse_error = None
@@ -370,6 +398,7 @@ class TimelineCoordinator:
         session.alerts = [self._default_alert(event) for event in parsed.events]
         session.notified_lead = [False] * len(parsed.events)
         session.notified_event = [False] * len(parsed.events)
+        session.calibration = [{} for _ in parsed.events]
         k = 1.0
         stored = self._stored
         if stored.get("key") == session.key and len(stored.get("events", [])) == len(parsed.events):
@@ -378,6 +407,7 @@ class TimelineCoordinator:
                 session.alerts[index] = bool(saved.get("alert", session.alerts[index]))
                 session.notified_lead[index] = bool(saved.get("notified_lead", False))
                 session.notified_event[index] = bool(saved.get("notified_event", False))
+                session.calibration[index] = dict(saved.get("calibration", {}))
                 state.status = saved.get("status", state.status)
                 if saved.get("status_since"):
                     state.status_since = dt_util.parse_datetime(saved["status_since"])
@@ -505,6 +535,96 @@ class TimelineCoordinator:
 
     # ----- calibration log and storage ---------------------------------------------------
 
+    def _record_calibration(
+        self, session: PrintSession, before: list[str], before_raw: list[float | None], now: datetime
+    ) -> None:
+        """Note what was predicted 5 and 1 minutes ahead of each event, and when it really happened.
+
+        Predictions are the raw estimate, without the safety margin, so they show the estimator's
+        own accuracy. Only changes seen live are recorded.
+        """
+        changed = False
+        for index, state in enumerate(session.states):
+            record = session.calibration[index]
+            raw, previous_raw = state.raw_minutes_until, before_raw[index]
+            if raw is not None and previous_raw is not None:
+                for name, threshold in (("predicted_5_min_ahead", 5.0), ("predicted_1_min_ahead", 1.0)):
+                    if name not in record and previous_raw > threshold >= raw:
+                        record[name] = (now + timedelta(minutes=raw)).isoformat(timespec="seconds")
+                        changed = True
+            if before[index] == STATUS_UPCOMING and state.status != STATUS_UPCOMING and "reached" not in record:
+                # "due" means the printer reached the event's layer but hasn't paused yet.
+                record["reached"] = now.isoformat(timespec="seconds")
+                changed = True
+            if state.status == STATUS_ACTIVE and "paused" not in record:
+                record["paused"] = now.isoformat(timespec="seconds")
+                changed = True
+        if changed:
+            self._save()
+
+    def _needs_fast_refresh(self) -> bool:
+        """Seconds are shown in the last minute, so refresh more often then."""
+        session = self.session
+        if session is None or not self.options[CONF_SHOW_SECONDS]:
+            return False
+        return any(
+            state.status == STATUS_UPCOMING and state.minutes_until is not None and state.minutes_until < 1.5
+            for state in session.states
+        )
+
+    def _set_fast_refresh(self, enabled: bool) -> None:
+        if enabled and self._fast_refresh_unsub is None and not self._stopped:
+            self._fast_refresh_unsub = async_track_time_interval(
+                self.hass, self._on_fast_tick, timedelta(seconds=FAST_UPDATE_INTERVAL_S)
+            )
+        elif not enabled and self._fast_refresh_unsub is not None:
+            self._fast_refresh_unsub()
+            self._fast_refresh_unsub = None
+
+    @callback
+    def _on_fast_tick(self, _now: datetime) -> None:
+        self._evaluate(printer_changed=False)
+
+    def calibration_report(self, session: PrintSession) -> list[dict[str, Any]]:
+        """Each event's predictions next to what happened, with the errors in seconds (positive = early)."""
+        report = []
+        for event, record in zip(session.events, session.calibration):
+            actual = record.get("paused") if event.kind == KIND_PAUSE else record.get("reached")
+            entry: dict[str, Any] = {"event": event.description, "layer": event.layer, **record}
+            for name in ("predicted_5_min_ahead", "predicted_1_min_ahead"):
+                if actual and record.get(name):
+                    predicted = dt_util.parse_datetime(record[name])
+                    happened = dt_util.parse_datetime(actual)
+                    if predicted and happened:
+                        entry[name.replace("predicted", "error_seconds")] = round(
+                            (happened - predicted).total_seconds()
+                        )
+            report.append(entry)
+        return report
+
+    def print_summary(self, session: PrintSession, ended: datetime | None = None) -> dict[str, Any]:
+        parsed = session.parsed
+        return {
+            "key": session.key,
+            "started": session.started.isoformat(),
+            "ended": ended.isoformat() if ended else None,
+            "file": session.file,
+            "slicer": parsed.slicer if parsed else None,
+            "slicer_total_minutes": parsed.total_min if parsed else None,
+            "total_layers": parsed.total_layers if parsed else None,
+            "rate_factor": session.estimator.k if session.estimator else None,
+            "events": [
+                {
+                    **event_attributes(event, state, parsed),
+                    "alert": alert,
+                    "remaining_at_event": event.remaining_min,
+                }
+                for event, state, alert in zip(session.events, session.states, session.alerts)
+            ],
+            "calibration": self.calibration_report(session),
+            "log": list(session.samples),
+        }
+
     def _sample(self, session: PrintSession, snap: PrinterSnapshot, now: datetime) -> None:
         if session.last_sample and (now - session.last_sample).total_seconds() < CALIBRATION_SAMPLE_INTERVAL_S:
             return
@@ -515,6 +635,9 @@ class TimelineCoordinator:
                 "time": now.isoformat(timespec="seconds"),
                 "status": snap.status,
                 "printer_remaining": snap.remaining_min,
+                "printer_remaining_precise": (
+                    round(snap.remaining_precise, 2) if snap.remaining_precise is not None else None
+                ),
                 "progress": snap.progress_pct,
                 "layer": snap.layer,
                 "speed": snap.speed,
@@ -531,6 +654,7 @@ class TimelineCoordinator:
         data: dict[str, Any] = {
             "recipients": sorted(self.recipients),
             "defaults": sorted(self._applied_defaults),
+            "last_print": self.last_print,
         }
         session = self.session
         if session is None or session.parsed is None:
@@ -548,6 +672,7 @@ class TimelineCoordinator:
                     "notified_event": session.notified_event[index],
                     "status": state.status,
                     "status_since": state.status_since.isoformat() if state.status_since else None,
+                    "calibration": session.calibration[index],
                 }
                 for index, state in enumerate(session.states)
             ],

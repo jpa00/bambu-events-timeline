@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import CONF_EVENT_SLOTS, CONF_SHOW_FINISHED
+from .const import CONF_EVENT_SLOTS, CONF_SHOW_FINISHED, CONF_SHOW_SECONDS
 from .coordinator import TimelineCoordinator
 from .entity import TimelineEntity
 from .estimator import STATUS_DONE
@@ -86,7 +86,12 @@ class EventAlertSwitch(TimelineEntity, SwitchEntity):
             return None
         return {
             "role": "event",
-            **event_attributes(session.events[self.index], session.states[self.index], session.parsed),
+            **event_attributes(
+                session.events[self.index],
+                session.states[self.index],
+                session.parsed,
+                show_seconds=bool(self.coordinator.options[CONF_SHOW_SECONDS]),
+            ),
         }
 
     async def async_turn_on(self, **kwargs: Any) -> None:

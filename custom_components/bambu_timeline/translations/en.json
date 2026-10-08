@@ -30,7 +30,8 @@
           "show_finished": "Keep finished events on the list",
           "early_margin_minutes": "Safety margin (minutes)",
           "early_margin_percent": "Extra safety margin for far-off events (percent)",
-          "event_slots": "Maximum number of events"
+          "event_slots": "Maximum number of events",
+          "show_seconds": "Show seconds in the last minute"
         },
         "data_description": {
           "default_recipients": "Phones that get alerts for every print. Anyone can still switch their phone on or off for a single print; it goes back to this setting when the print ends.",
@@ -40,7 +41,8 @@
           "show_finished": "Off: an event disappears once it's done (its switch becomes unavailable). On: it stays, marked as done, until the print ends.",
           "early_margin_minutes": "Countdowns are shortened by this many minutes, so they run early rather than late. Countdowns also round down to whole minutes, which adds up to another minute.",
           "early_margin_percent": "A percentage of the time left until each event (not of the whole print). If it is larger than the minute margin, it is used instead: 3 % of an event 2 hours away is 3.6 minutes. Close to the event, only the minute margin applies. 0 turns it off.",
-          "event_slots": "How many events a print can show. Changing this adds or removes entities."
+          "event_slots": "How many events a print can show. Changing this adds or removes entities.",
+          "show_seconds": "In an event's final minute, count down in seconds (\"in ~45 s\"). It's an estimate: the printer only reports whole minutes, so the seconds are worked out from when its minute last changed."
         }
       }
     }

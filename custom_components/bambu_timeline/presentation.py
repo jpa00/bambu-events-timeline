@@ -40,8 +40,8 @@ def duration_text(minutes: int) -> str:
     return f"{hours} h {rest:02d} min" if hours else f"{rest} min"
 
 
-def countdown_text(event: TimelineEvent, state: EventState) -> str:
-    """A short line for the dashboard, e.g. "in 23 min · 14:35"."""
+def countdown_text(event: TimelineEvent, state: EventState, show_seconds: bool = False) -> str:
+    """A short line for the dashboard, e.g. "in 23 min · 14:35", or "in ~45 s" in the last minute."""
     if state.status == STATUS_ACTIVE:
         return "Paused, waiting for you" if event.kind == KIND_PAUSE else "Now"
     if state.status == STATUS_DUE:
@@ -54,16 +54,22 @@ def countdown_text(event: TimelineEvent, state: EventState) -> str:
     if state.estimate_after_start:
         return f"{duration_text(minutes)} after printing starts"
     when = f" · {clock(state.eta)}" if state.eta else ""
+    if minutes == 0 and show_seconds and state.minutes_until is not None:
+        # The printer only reports whole minutes, so this is an informed estimate: hence the "~".
+        seconds = round(state.minutes_until * 60 / 5) * 5
+        return f"in ~{seconds} s" if seconds > 0 else "Any moment now"
     if minutes == 0:
         return f"in less than a minute{when}"
     return f"in {duration_text(minutes)}{when}"
 
 
-def event_attributes(event: TimelineEvent, state: EventState, parsed: ParsedPrint | None) -> dict[str, Any]:
+def event_attributes(
+    event: TimelineEvent, state: EventState, parsed: ParsedPrint | None, show_seconds: bool = False
+) -> dict[str, Any]:
     eta = to_minute(state.eta)
     return {
         "label": event_label(event, parsed),
-        "countdown": countdown_text(event, state),
+        "countdown": countdown_text(event, state, show_seconds),
         "description": event.description,
         "kind": event.kind,
         "layer": event.layer,

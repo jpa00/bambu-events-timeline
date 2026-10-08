@@ -47,9 +47,60 @@ LAYER_START_TOLERANCE = 1.0
 class PrinterSnapshot:
     status: str | None = None
     remaining_min: float | None = None
+    """The printer's remaining time as reported, in whole minutes (rounded down)."""
     progress_pct: float | None = None
     layer: int | None = None
     speed: str | None = None
+    remaining_precise: float | None = None
+    """``remaining_min`` refined to within the current minute (see MinuteInterpolator), if known."""
+
+    @property
+    def best_remaining(self) -> float | None:
+        return self.remaining_precise if self.remaining_precise is not None else self.remaining_min
+
+
+class MinuteInterpolator:
+    """Estimate how far into its current whole minute the printer's remaining time is.
+
+    The printer reports remaining time rounded down to whole minutes, so the value
+    drops to ``n`` the moment the true remaining time falls below ``n + 1``. From the
+    moment that drop is seen, the true value is about ``n + 1 - (time since the drop)``.
+    Time spent paused doesn't count. Until a drop has been seen while printing, the
+    reported value is used as is, which errs on the early side.
+    """
+
+    def __init__(self) -> None:
+        self._dropped_at: datetime | None = None
+        self._paused_at: datetime | None = None
+        self._last_value: float | None = None
+
+    def observe(self, value: float | None, status: str | None, now: datetime) -> None:
+        if status == PRINTER_PAUSED:
+            if self._dropped_at is not None and self._paused_at is None:
+                self._paused_at = now
+            self._last_value = value
+            return
+        if self._paused_at is not None and self._dropped_at is not None:
+            # Resumed: the pause doesn't count towards the current minute.
+            self._dropped_at += now - self._paused_at
+        self._paused_at = None
+        if value != self._last_value:
+            dropped_by_one = (
+                status == PRINTER_RUNNING
+                and value is not None
+                and self._last_value is not None
+                and self._last_value - value == 1
+            )
+            # Any other change (a jump after a speed change, a new print) leaves the position unknown.
+            self._dropped_at = now if dropped_by_one else None
+        self._last_value = value
+
+    def refine(self, value: float | None, now: datetime) -> float | None:
+        if value is None or self._dropped_at is None:
+            return value
+        reference = self._paused_at or now
+        elapsed = (reference - self._dropped_at).total_seconds() / 60
+        return value + 1 - min(max(elapsed, 0.0), 1.0)
 
 
 @dataclass
@@ -60,6 +111,8 @@ class EventState:
     eta: datetime | None = None
     estimate_after_start: bool = False
     """True while the printer is still preparing, so the countdown hasn't really started."""
+    raw_minutes_until: float | None = None
+    """The estimate without the safety margin, for calibration."""
 
 
 class Estimator:
@@ -111,8 +164,8 @@ class Estimator:
         """Best estimate without the safety margin. Negative means the event's position has passed."""
         if snap.status == PRINTER_PREPARING and self.parsed.total_min is not None:
             return self.parsed.total_min - event.remaining_min
-        if snap.remaining_min is not None:
-            return snap.remaining_min - event.remaining_min * self.k
+        if (remaining := snap.best_remaining) is not None:
+            return remaining - event.remaining_min * self.k
         slicer_left = self.slicer_remaining(snap)
         if slicer_left is not None:
             return (slicer_left - event.remaining_min) * self.k
@@ -175,6 +228,7 @@ class Estimator:
                 state.status_since = now
 
             state.estimate_after_start = snap.status == PRINTER_PREPARING
+            state.raw_minutes_until = raw if new == STATUS_UPCOMING else None
             if new == STATUS_UPCOMING and raw is not None:
                 minutes = self.with_margin(raw)
                 if snap.status == PRINTER_PAUSED and state.minutes_until is not None:

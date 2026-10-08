@@ -187,4 +187,5 @@ Event slots with stable IDs keep the dashboard YAML fixed. Slots are filled in t
   - no alerts for events already past when the print was first seen, and no duplicates after a restart;
   - a test-notification button, plus a "Send alerts to" section in the dashboard YAML.
   - Fixed while testing: printer sensor updates are now evaluated as one set (they used to be read one at a time, which skewed the rate factor), and a blip in the task-name sensor no longer counts as a new print.
+- **Calibration support (v0.2.5):** the printer reports remaining time rounded down to whole minutes; the estimator now interpolates within the minute from the moment the value ticks down (pauses excluded). Each event gets a predicted-vs-actual record (raw estimate 5 and 1 minutes ahead, time reached, time paused), and the last finished print stays in the diagnostics. An optional "in ~45 s" display for the final minute refreshes every 5 seconds.
 - **Phase 2 next:** the long prints' diagnostics already contain the calibration log. A speed change during one of them covers the calibration; otherwise a small dedicated test print.

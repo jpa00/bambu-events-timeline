@@ -22,6 +22,7 @@ CONF_MARGIN_MIN = "early_margin_minutes"
 CONF_MARGIN_PCT = "early_margin_percent"
 CONF_EVENT_SLOTS = "event_slots"
 CONF_SHOW_FINISHED = "show_finished"
+CONF_SHOW_SECONDS = "show_seconds"
 
 DEFAULT_OPTIONS = {
     CONF_LEAD_TIME: 5,
@@ -32,6 +33,7 @@ DEFAULT_OPTIONS = {
     CONF_MARGIN_PCT: 0.0,
     CONF_EVENT_SLOTS: 10,
     CONF_SHOW_FINISHED: False,
+    CONF_SHOW_SECONDS: False,
 }
 
 # ha-bambulab printer sensors we read, by entity description key.
@@ -62,6 +64,8 @@ FILE_SEARCH_INTERVAL_S = 10
 STALE_FILE_GRACE_S = 120
 
 UPDATE_INTERVAL_S = 30
+# How often to refresh during an event's last minute, when seconds are shown.
+FAST_UPDATE_INTERVAL_S = 5
 CALIBRATION_SAMPLE_INTERVAL_S = 60
 CALIBRATION_MAX_SAMPLES = 720
 

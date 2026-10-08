@@ -91,6 +91,7 @@ The times it finds should match what OrcaSlicer shows when you hover an event's 
 - **Also alert when the event happens.** On by default.
 - **Alerts for custom G-code on by default.** Pauses always start with alerts on.
 - **Keep finished events on the list.** Off by default.
+- **Show seconds in the last minute.** Off by default. In an event's final minute the countdown reads "in ~45 s". The printer only reports whole minutes, so the seconds are an informed estimate, worked out from when the printer's minute last ticked down.
 - **Safety margin (minutes).** 0.5 by default.
 - **Extra safety margin for far-off events (percent).** Off by default. A percentage of the time left until each event, used instead of the minute margin when it's larger. Useful if your countdowns tend to run late on long prints.
 - **Maximum number of events.** 10 by default.
@@ -99,7 +100,7 @@ The times it finds should match what OrcaSlicer shows when you hover an event's 
 
 - **"File not found":** ha-bambulab didn't download the print file. Check that it has the printer's IP address and access code, and that the printer has an SD card. Look in `/config/www/media/ha-bambulab/<serial>/prints/` for a `.gcode` file with your print's name.
 - **No notifications:** press **Send test notification**. If that doesn't arrive either, check that the phone's switch is on and that `notify.mobile_app_<your phone>` exists under **Developer tools → Actions**.
-- **The countdown is off:** download the diagnostics (**Settings → Devices & services → Bambu Events Timeline → ⋮ → Download diagnostics**) during or right after a print. They contain a minute-by-minute log of the printer's numbers next to the slicer's. Attach them to a bug report.
+- **The countdown is off:** download the diagnostics (**Settings → Devices & services → Bambu Events Timeline → ⋮ → Download diagnostics**) during a print or after it, until the next print finishes. They contain a minute-by-minute log of the printer's numbers next to the slicer's, and a calibration report for each event: what was predicted 5 and 1 minutes ahead, when it actually happened, and the difference in seconds (positive means the prediction was early). Attach them to a bug report.
 - **Updates don't show up:** Home Assistant's update list works from GitHub releases. A release is published automatically whenever the version number changes, so HACS may show a newer commit before Home Assistant lists it as an update.
 - **Check a G-code file without Home Assistant:**
 

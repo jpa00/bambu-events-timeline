@@ -161,3 +161,25 @@ def test_margin_defaults_and_percentage():
     estimator = Estimator(PARSED, margin_min=1, margin_pct=0.03)
     assert estimator.with_margin(120) == pytest.approx(120 - 3.6)  # Percentage of the time left wins far out...
     assert estimator.with_margin(10) == pytest.approx(9)  # ...the minute margin close to the event.
+
+
+def test_minute_interpolation():
+    from custom_components.bambu_timeline.estimator import MinuteInterpolator
+
+    clock = MinuteInterpolator()
+    clock.observe(10, PRINTER_RUNNING, NOW)
+    assert clock.refine(10, NOW + timedelta(seconds=30)) == 10  # No drop seen yet: the early side.
+
+    clock.observe(9, PRINTER_RUNNING, NOW)  # Just dropped below 10.
+    assert clock.refine(9, NOW + timedelta(seconds=15)) == pytest.approx(9.75)
+    assert clock.refine(9, NOW + timedelta(seconds=90)) == 9  # Never below the reported value.
+
+    # Time spent paused doesn't count.
+    clock.observe(9, PRINTER_PAUSED, NOW + timedelta(seconds=15))
+    assert clock.refine(9, NOW + timedelta(minutes=10)) == pytest.approx(9.75)
+    clock.observe(9, PRINTER_RUNNING, NOW + timedelta(minutes=10))
+    assert clock.refine(9, NOW + timedelta(minutes=10, seconds=15)) == pytest.approx(9.5)
+
+    # A jump (e.g. after a speed change) means the position within the minute is unknown again.
+    clock.observe(5, PRINTER_RUNNING, NOW + timedelta(minutes=11))
+    assert clock.refine(5, NOW + timedelta(minutes=11, seconds=30)) == 5

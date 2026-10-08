@@ -31,6 +31,7 @@ from .const import (
     CONF_MODEL,
     CONF_SERIAL,
     CONF_SHOW_FINISHED,
+    CONF_SHOW_SECONDS,
     DEFAULT_OPTIONS,
     DOMAIN,
 )
@@ -115,6 +116,7 @@ class BambuTimelineOptionsFlow(OptionsFlowWithReload):
                     CONF_CUSTOM_GCODE_ALERTS, default=current[CONF_CUSTOM_GCODE_ALERTS]
                 ): BooleanSelector(),
                 vol.Required(CONF_SHOW_FINISHED, default=current[CONF_SHOW_FINISHED]): BooleanSelector(),
+                vol.Required(CONF_SHOW_SECONDS, default=current[CONF_SHOW_SECONDS]): BooleanSelector(),
                 vol.Required(CONF_MARGIN_MIN, default=current[CONF_MARGIN_MIN]): _number(0, 15, 0.5, "min"),
                 vol.Required(CONF_MARGIN_PCT, default=current[CONF_MARGIN_PCT]): _number(0, 25, 0.5, "%"),
                 vol.Required(CONF_EVENT_SLOTS, default=current[CONF_EVENT_SLOTS]): _number(1, 30, 1),

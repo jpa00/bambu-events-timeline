@@ -448,3 +448,58 @@ async def test_alert_recipients_are_listed_by_person(hass: HomeAssistant, bambu_
     for entity_id in ("switch.a1_timeline_notify_pixel_9", "switch.a1_timeline_notify_galaxy_tab", sam_switch.entity_id):
         await hass.services.async_call("switch", "turn_off", {"entity_id": entity_id}, blocking=True)
     assert hass.states.get("sensor.a1_timeline_alert_recipients").state == "no one"
+
+
+async def test_seconds_in_the_last_minute(hass: HomeAssistant, bambu_entry, freezer):
+    import re
+    from datetime import timedelta
+
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    await setup_timeline(hass, bambu_entry, show_seconds=True)
+    cache_gcode(hass)
+    printer_at(hass, 200)
+    await settle(hass)
+    printer_at(hass, 160)
+    await settle(hass)
+    printer_at(hass, 159)  # The printer's minute just ticked down: the clock within the minute starts.
+    await settle(hass)
+
+    freezer.tick(timedelta(seconds=20))
+    async_fire_time_changed(hass)
+    await settle(hass)
+    first = hass.states.get(EVENT_1).attributes["countdown"]
+    assert re.fullmatch(r"in ~\d+ s", first), first
+
+    # The 5-second refresh keeps it moving without any printer update.
+    freezer.tick(timedelta(seconds=15))
+    async_fire_time_changed(hass)
+    await settle(hass)
+    second = hass.states.get(EVENT_1).attributes["countdown"]
+    assert int(second[4:-2]) < int(first[4:-2]), (first, second)
+
+
+async def test_calibration_record_kept_after_print(hass: HomeAssistant, bambu_entry):
+    entry = await setup_timeline(hass, bambu_entry)
+    cache_gcode(hass)
+    for slicer_left in (200, 170, 163, 159):
+        printer_at(hass, slicer_left)
+        await settle(hass)
+    printer_at(hass, 158.4, status="pause")
+    await settle(hass)
+    printer(hass, "finish", layer=24, remaining=0, progress=100)
+    await settle(hass)
+
+    data = await async_get_config_entry_diagnostics(hass, entry)
+    assert data["print"] is None
+    record = data["last_finished_print"]["calibration"][0]
+    assert record["event"] == "Pause" and record["layer"] == 5
+    assert {"predicted_5_min_ahead", "predicted_1_min_ahead", "reached", "paused"} <= record.keys()
+    assert "error_seconds_1_min_ahead" in record
+    assert data["last_finished_print"]["log"]
+
+    # Kept across a restart, too.
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await settle(hass)
+    data = await async_get_config_entry_diagnostics(hass, entry)
+    assert data["last_finished_print"]["calibration"][0]["layer"] == 5

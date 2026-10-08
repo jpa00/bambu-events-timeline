@@ -11,7 +11,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import PARSE_STATES
+from .const import CONF_SHOW_SECONDS, PARSE_STATES
 from .coordinator import TimelineCoordinator
 from .entity import TimelineEntity
 from .estimator import STATUS_DONE
@@ -54,7 +54,12 @@ class NextEventSensor(TimelineEntity, SensorEntity):
         if index is None:
             return None
         session = self.coordinator.session
-        attributes = event_attributes(session.events[index], session.states[index], session.parsed)
+        attributes = event_attributes(
+            session.events[index],
+            session.states[index],
+            session.parsed,
+            show_seconds=bool(self.coordinator.options[CONF_SHOW_SECONDS]),
+        )
         attributes["alert"] = session.alerts[index]
         attributes["slot"] = index + 1
         return attributes
